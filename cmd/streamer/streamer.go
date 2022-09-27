@@ -73,8 +73,11 @@ func initConfig() {
 
 func getStreamerConfig() (streamer.Config, error) {
 	cfg := streamer.Config{
-		AuditLogPath: viper.GetString("audit_log_path"),
-		DBpath:       viper.GetString("db_path"),
+		GitlabHostname:   viper.GetString("gitlab_hostname"),
+		AuditLogPath:     viper.GetString("sources.audit_log_path"),
+		DBpath:           viper.GetString("db_path"),
+		SyslogServerAddr: viper.GetString("destinations.syslog.server_addr"),
+		SyslogProtocol:   viper.GetString("destinations.syslog.protocol"),
 	}
 
 	return cfg, nil
@@ -101,8 +104,8 @@ func loadViperConfig(path string, isFile bool) error {
 	}
 
 	var errorText string
-	if viper.GetString("audit_log_path") == "" {
-		errorText += "Fatal config error: set audit_log_path in config file\n"
+	if viper.GetString("sources.audit_log_path") == "" {
+		errorText += "Fatal config error: set sources.audit_log_path in config file\n"
 	}
 
 	if viper.GetString("db_path") == "" {

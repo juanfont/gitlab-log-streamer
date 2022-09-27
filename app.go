@@ -10,8 +10,12 @@ import (
 
 type Config struct {
 	AuditLogForwardingEndpoint string
+	GitlabHostname             string
 	AuditLogPath               string
 	DBpath                     string
+
+	SyslogServerAddr string
+	SyslogProtocol   string
 }
 
 type AuditLogStreamer struct {
