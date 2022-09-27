@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"reflect"
@@ -77,9 +78,23 @@ func (s *AuditLogStreamer) forwardNewAuditLogEvents(auditEvents []*AuditEvent) e
 		}
 	}
 
+	conn, err := net.Dial(s.cfg.SyslogProtocol, s.cfg.SyslogServerAddr)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to connect to syslog server")
+		return err
+	}
+	defer conn.Close()
+
 	for _, auditEvent := range auditEvents {
 		syslogMsg := s.auditEventToSyslogMessage(auditEvent)
-		fmt.Println(syslogMsg.Valid())
+		str, _ := syslogMsg.String()
+
+		_, err = conn.Write([]byte(str + "\n"))
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to send syslog message")
+			continue
+		}
+		log.Debug().Msg(str)
 	}
 
 	return nil
@@ -131,7 +146,7 @@ func (s *AuditLogStreamer) parseAuditLogEvent(line string) (*AuditEvent, error) 
 	return auditEvent, nil
 }
 
-func (*AuditLogStreamer) auditEventToSyslogMessage(auditEvent *AuditEvent) rfc5424.SyslogMessage {
+func (s *AuditLogStreamer) auditEventToSyslogMessage(auditEvent *AuditEvent) rfc5424.SyslogMessage {
 	msg := rfc5424.SyslogMessage{}
 
 	facility := 13 // audit log
@@ -142,14 +157,18 @@ func (*AuditLogStreamer) auditEventToSyslogMessage(auditEvent *AuditEvent) rfc54
 
 	msg.SetTimestamp(auditEvent.Time.Format(time.RFC3339))
 	msg.SetAppname("gitlab")
-
-	textMessage := auditEventToMessage(auditEvent)
-	msg.SetMessage(textMessage)
+	msg.SetHostname(s.cfg.GitlabHostname)
+	msg.SetProcID(fmt.Sprintf("%d", os.Getpid()))
+	msg.SetMsgID(string(auditEvent.EntityType))
 
 	// iterate throgh the audit event data using reflection
 	reflectValue := reflect.ValueOf(*auditEvent)
 	for i := 0; i < reflectValue.NumField(); i++ {
 		fieldName := reflectValue.Type().Field(i).Name
+		if fieldName == "" {
+			continue
+		}
+
 		fieldValue := reflectValue.Field(i).Interface()
 
 		// check if fieldValue is a pointer
@@ -164,6 +183,9 @@ func (*AuditLogStreamer) auditEventToSyslogMessage(auditEvent *AuditEvent) rfc54
 				fmt.Sprintf("%v", fieldValue))
 		}
 	}
+
+	textMessage := auditEventToMessage(auditEvent)
+	msg.SetMessage(textMessage)
 
 	return msg
 }
