@@ -104,6 +104,13 @@ func loadViperConfig(path string, isFile bool) error {
 		return fmt.Errorf("fatal error reading config file: %w", err)
 	}
 
+	logLevelStr := viper.GetString("log_level")
+	logLevel, err := zerolog.ParseLevel(logLevelStr)
+	if err != nil {
+		logLevel = zerolog.InfoLevel
+	}
+	zerolog.SetGlobalLevel(logLevel)
+
 	var errorText string
 	if viper.GetString("sources.audit_log_path") == "" {
 		errorText += "Fatal config error: set sources.audit_log_path in config file\n"
@@ -149,13 +156,6 @@ func main() {
 		TimeFormat: time.RFC3339,
 		NoColor:    !colors,
 	})
-
-	logLevelStr := viper.GetString("log_level")
-	logLevel, err := zerolog.ParseLevel(logLevelStr)
-	if err != nil {
-		logLevel = zerolog.InfoLevel
-	}
-	zerolog.SetGlobalLevel(logLevel)
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)

@@ -94,12 +94,13 @@ func (s *AuditLogStreamer) forwardNewAuditLogEvents(auditEvents []*AuditEvent) e
 			str, _ = syslogMsg.String()
 		}
 
+		log.Info().Msg(str)
+
 		_, err = conn.Write([]byte(str + "\n"))
 		if err != nil {
 			log.Error().Err(err).Msg("Failed to send syslog message")
 			continue
 		}
-		log.Debug().Msg(str)
 	}
 
 	return nil
