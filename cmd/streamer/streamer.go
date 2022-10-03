@@ -78,6 +78,7 @@ func getStreamerConfig() (streamer.Config, error) {
 		DBpath:           viper.GetString("db_path"),
 		SyslogServerAddr: viper.GetString("destinations.syslog.server_addr"),
 		SyslogProtocol:   viper.GetString("destinations.syslog.protocol"),
+		UseLEEF:          viper.GetBool("destinations.syslog.use_leef"),
 	}
 
 	return cfg, nil

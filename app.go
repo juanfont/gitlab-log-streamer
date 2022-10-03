@@ -2,10 +2,15 @@ package streamer
 
 import (
 	"os"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/rs/zerolog/log"
 	"gorm.io/gorm"
+)
+
+const (
+	GitlabVersionManifestPath = "/opt/gitlab/version-manifest.txt"
 )
 
 type Config struct {
@@ -16,11 +21,14 @@ type Config struct {
 
 	SyslogServerAddr string
 	SyslogProtocol   string
+	UseLEEF          bool // Use QRadar propietary LEEF format
 }
 
 type AuditLogStreamer struct {
 	cfg Config
 	db  *gorm.DB
+
+	currentGitlabVersion string
 }
 
 func NewAuditLogStreamer(config Config) (*AuditLogStreamer, error) {
@@ -34,6 +42,17 @@ func NewAuditLogStreamer(config Config) (*AuditLogStreamer, error) {
 	streamer := &AuditLogStreamer{
 		cfg: config,
 	}
+
+	// run updateCurrentGitlabVersion() every 5 mins
+	go func() {
+		for {
+			err := streamer.updateCurrentGitlabVersion()
+			if err != nil {
+				log.Error().Caller().Err(err).Msgf("Error while updating current Gitlab version")
+			}
+			time.Sleep(5 * time.Minute)
+		}
+	}()
 
 	err := streamer.initDB()
 	if err != nil {
