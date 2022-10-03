@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/influxdata/go-syslog/rfc5424"
+	"github.com/juanfont/gitlab-log-streamer/pkg/leef"
 	"github.com/rs/zerolog/log"
-	"github.com/sanity-io/litter"
 )
 
 const (
@@ -86,8 +86,13 @@ func (s *AuditLogStreamer) forwardNewAuditLogEvents(auditEvents []*AuditEvent) e
 	defer conn.Close()
 
 	for _, auditEvent := range auditEvents {
-		syslogMsg := s.auditEventToSyslogMessage(auditEvent)
-		str, _ := syslogMsg.String()
+		var str string
+		if s.cfg.UseLEEF {
+			str = s.auditEventToLEEF(auditEvent).String()
+		} else {
+			syslogMsg := s.auditEventToSyslogMessage(auditEvent)
+			str, _ = syslogMsg.String()
+		}
 
 		_, err = conn.Write([]byte(str + "\n"))
 		if err != nil {
@@ -146,6 +151,32 @@ func (s *AuditLogStreamer) parseAuditLogEvent(line string) (*AuditEvent, error) 
 	return auditEvent, nil
 }
 
+func (s *AuditLogStreamer) auditEventToLEEF(auditEvent *AuditEvent) leef.LEEFMessage {
+	syslogHeader := leef.SyslogRFC5424Header{
+		Priority:  13*8 + logLevelStringToSyslog(auditEvent.Severity), // facility 13 is "security/authorization"
+		Timestamp: auditEvent.Time.Format(time.RFC3339),
+		Hostname:  s.cfg.GitlabHostname,
+	}
+
+	messageID, message := getAuditEventMessageType(auditEvent)
+	fieldsMap := auditEventFieldsToMap(auditEvent)
+	fieldsMap["msg"] = message
+	fieldsMap["pid"] = fmt.Sprintf("%d", os.Getpid())
+
+	msg := leef.LEEFMessage{
+		SyslogHeader:    syslogHeader,
+		LEEFVersion:     "2.0",
+		Vendor:          "GitLab Inc.",
+		Product:         "GitLab",
+		Version:         s.currentGitlabVersion,
+		EventID:         messageID,
+		Separator:       "^",
+		EventAttributes: fieldsMap,
+	}
+
+	return msg
+}
+
 func (s *AuditLogStreamer) auditEventToSyslogMessage(auditEvent *AuditEvent) rfc5424.SyslogMessage {
 	msg := rfc5424.SyslogMessage{}
 
@@ -159,9 +190,21 @@ func (s *AuditLogStreamer) auditEventToSyslogMessage(auditEvent *AuditEvent) rfc
 	msg.SetAppname("gitlab")
 	msg.SetHostname(s.cfg.GitlabHostname)
 	msg.SetProcID(fmt.Sprintf("%d", os.Getpid()))
-	msg.SetMsgID(string(auditEvent.EntityType))
 
-	// iterate throgh the audit event data using reflection
+	fieldsMap := auditEventFieldsToMap(auditEvent)
+	for k, v := range fieldsMap {
+		msg.SetParameter("audit_event", k, fmt.Sprintf("%v", v))
+	}
+
+	messageID, message := getAuditEventMessageType(auditEvent)
+	msg.SetMsgID(messageID)
+	msg.SetMessage(message)
+
+	return msg
+}
+
+func auditEventFieldsToMap(auditEvent *AuditEvent) map[string]string {
+	fieldMap := map[string]string{}
 	reflectValue := reflect.ValueOf(*auditEvent)
 	for i := 0; i < reflectValue.NumField(); i++ {
 		fieldName := reflectValue.Type().Field(i).Name
@@ -178,16 +221,11 @@ func (s *AuditLogStreamer) auditEventToSyslogMessage(auditEvent *AuditEvent) rfc
 		}
 
 		if reflectValue.Field(i).Kind() != reflect.Ptr || !reflectValue.Field(i).IsNil() {
-			msg.SetParameter("audit_event",
-				fieldName,
-				fmt.Sprintf("%v", fieldValue))
+			fieldMap[fieldName] = fmt.Sprintf("%v", fieldValue)
 		}
 	}
 
-	textMessage := auditEventToMessage(auditEvent)
-	msg.SetMessage(textMessage)
-
-	return msg
+	return fieldMap
 }
 
 func logLevelStringToSyslog(level string) int {
@@ -210,67 +248,67 @@ func logLevelStringToSyslog(level string) int {
 }
 
 // auditEventToMessage converts an audit event to a human-readable message
-func auditEventToMessage(auditEvent *AuditEvent) string {
+func getAuditEventMessageType(auditEvent *AuditEvent) (string, string) {
 	if auditEvent.EntityType == "User" {
-		return auditEventToUserMessage(auditEvent)
+		return auditEventToUserMessageType(auditEvent)
 	}
 
 	if auditEvent.EntityType == "Project" {
-		return auditEventToProjectMessage(auditEvent)
+		return auditEventToProjectMessageType(auditEvent)
 	}
 
 	if auditEvent.EntityType == "Group" {
-		return auditEventToGroupMessage(auditEvent)
+		return auditEventToGroupMessageType(auditEvent)
 	}
 
-	fmt.Printf("%v", auditEvent)
+	log.Warn().Msgf("Unknown audit event entity type %s", auditEvent.EntityType)
 
-	return "unkown event"
+	return "unknown event", fmt.Sprintf("Unknown event: %v", auditEvent)
 }
 
-func auditEventToUserMessage(auditEvent *AuditEvent) string {
+func auditEventToUserMessageType(auditEvent *AuditEvent) (string, string) {
 	if auditEvent.With != nil {
 		switch *auditEvent.With {
 		case AuditEventLoginWithWebAuthn:
-			return fmt.Sprintf("User %s logged in with WebAuthn", auditEvent.AuthorName)
+			return "User logged in with WebAuthn", fmt.Sprintf("User %s logged in with WebAuthn", auditEvent.AuthorName)
 		case AuditEventLoginWithU2F:
-			return fmt.Sprintf("User %s logged in with U2F", auditEvent.AuthorName)
+			return "User logged in with U2F", fmt.Sprintf("User %s logged in with U2F", auditEvent.AuthorName)
 		case AuditEventLoginWithTwoFactor:
-			return fmt.Sprintf("User %s logged in with two-factor authentication", auditEvent.AuthorName)
+			return "User logged in with 2FA", fmt.Sprintf("User %s logged in with two-factor authentication", auditEvent.AuthorName)
 		case AuditEventLoginStandard:
-			return fmt.Sprintf("User %s logged in", auditEvent.AuthorName)
+			return "User logged in", fmt.Sprintf("User %s logged in", auditEvent.AuthorName)
 		case "saml":
-			return fmt.Sprintf("User %s logged in with SAML", auditEvent.AuthorName)
+			return "User logged in with SAML", fmt.Sprintf("User %s logged in with SAML", auditEvent.AuthorName)
 		default:
-			return fmt.Sprintf("User %s logged in with unknown method (%s)", auditEvent.AuthorName, *auditEvent.With)
+			return "User logged in with unknown method", fmt.Sprintf("User %s logged in with unknown method (%s)", auditEvent.AuthorName, *auditEvent.With)
 		}
 	}
 
 	if auditEvent.Add != nil {
-		return fmt.Sprintf("User %s added %s (target %s)", auditEvent.AuthorName, *auditEvent.Add, auditEvent.EntityPath)
+		return "User event - add", fmt.Sprintf("User %s added %s (target %s)", auditEvent.AuthorName, *auditEvent.Add, auditEvent.EntityPath)
 	}
 
 	if auditEvent.CustomMessage != nil {
-		return fmt.Sprintf("User %s %s (target %s)", auditEvent.AuthorName, *auditEvent.CustomMessage, auditEvent.EntityPath)
+		return "User event - change", fmt.Sprintf("User %s %s (target %s)", auditEvent.AuthorName, *auditEvent.CustomMessage, auditEvent.EntityPath)
 	}
 
 	if auditEvent.Remove != nil {
-		return fmt.Sprintf("User %s removed %s for %s", auditEvent.AuthorName, *auditEvent.Remove, auditEvent.EntityPath)
+		return "User event - remove", fmt.Sprintf("User %s removed %s for %s", auditEvent.AuthorName, *auditEvent.Remove, auditEvent.EntityPath)
 	}
 
-	return "unknown user event"
+	return "User event - unknown", fmt.Sprintf("User %s %s (target %s)", auditEvent.AuthorName, auditEvent.Action, auditEvent.EntityPath)
 }
 
-func auditEventToProjectMessage(auditEvent *AuditEvent) string {
+func auditEventToProjectMessageType(auditEvent *AuditEvent) (string, string) {
 	if auditEvent.Add != nil {
-		return fmt.Sprintf("User %s added %s %s", auditEvent.AuthorName, *auditEvent.Add, auditEvent.EntityPath)
+		return "Project event - add", fmt.Sprintf("User %s added %s %s", auditEvent.AuthorName, *auditEvent.Add, auditEvent.EntityPath)
 	}
 	if auditEvent.Remove != nil {
-		return fmt.Sprintf("User %s removed %s %s", auditEvent.AuthorName, *auditEvent.Remove, auditEvent.EntityPath)
+		return "Project event - remove", fmt.Sprintf("User %s removed %s %s", auditEvent.AuthorName, *auditEvent.Remove, auditEvent.EntityPath)
 	}
 
 	if auditEvent.CustomMessage != nil {
-		return fmt.Sprintf(
+		return "Project event - custom", fmt.Sprintf(
 			"User %s changed %s %s: %s",
 			auditEvent.AuthorName,
 			auditEvent.EntityType,
@@ -279,7 +317,7 @@ func auditEventToProjectMessage(auditEvent *AuditEvent) string {
 	}
 
 	if auditEvent.Change != nil {
-		return fmt.Sprintf(
+		return "Project event - change", fmt.Sprintf(
 			"User %s changed %s at %s for %s",
 			auditEvent.AuthorName,
 			*auditEvent.Change,
@@ -287,48 +325,49 @@ func auditEventToProjectMessage(auditEvent *AuditEvent) string {
 			*auditEvent.TargetDetails)
 	}
 
-	return "unknown project event"
+	return "Project event - unknown", fmt.Sprintf("User %s %s %s", auditEvent.AuthorName, auditEvent.Action, auditEvent.EntityPath)
 }
 
-func auditEventToGroupMessage(auditEvent *AuditEvent) string {
+func auditEventToGroupMessageType(auditEvent *AuditEvent) (string, string) {
 	if auditEvent.Add != nil {
-		return fmt.Sprintf("User %s in group %d added %s %s %s",
-			auditEvent.AuthorName,
-			auditEvent.EntityID,
-			*auditEvent.Add,
-			auditEvent.EntityPath,
-			*auditEvent.TargetDetails)
+		return "Group event - add",
+			fmt.Sprintf("User %s in group %d added %s %s %s",
+				auditEvent.AuthorName,
+				auditEvent.EntityID,
+				*auditEvent.Add,
+				auditEvent.EntityPath,
+				*auditEvent.TargetDetails)
 	}
 
 	if auditEvent.Remove != nil {
-		return fmt.Sprintf("User %s in group %d removed %s %s %s",
-			auditEvent.AuthorName,
-			auditEvent.EntityID,
-			*auditEvent.Remove,
-			auditEvent.EntityPath,
-			*auditEvent.TargetDetails)
+		return "Group event - remove",
+			fmt.Sprintf("User %s in group %d removed %s %s %s",
+				auditEvent.AuthorName,
+				auditEvent.EntityID,
+				*auditEvent.Remove,
+				auditEvent.EntityPath,
+				*auditEvent.TargetDetails)
 	}
 
 	if auditEvent.Change != nil {
-		return fmt.Sprintf("User %s in group %d change %s %s %s",
-			auditEvent.AuthorName,
-			auditEvent.EntityID,
-			*auditEvent.Change,
-			auditEvent.EntityPath,
-			*auditEvent.TargetDetails)
+		return "Group event - change",
+			fmt.Sprintf("User %s in group %d change %s %s %s",
+				auditEvent.AuthorName,
+				auditEvent.EntityID,
+				*auditEvent.Change,
+				auditEvent.EntityPath,
+				*auditEvent.TargetDetails)
 	}
 
 	if auditEvent.CustomMessage != nil {
-		return fmt.Sprintf(
-			"User %s changed %s %s: %s",
-			auditEvent.AuthorName,
-			auditEvent.EntityType,
-			auditEvent.EntityPath,
-			*auditEvent.CustomMessage)
+		return "Group event - change",
+			fmt.Sprintf(
+				"User %s changed %s %s: %s",
+				auditEvent.AuthorName,
+				auditEvent.EntityType,
+				auditEvent.EntityPath,
+				*auditEvent.CustomMessage)
 	}
-	litter.Dump(auditEvent)
-	fmt.Println(auditEvent.Time)
-	os.Exit(0)
 
-	return "unknown group event"
+	return "Group event - unknown", fmt.Sprintf("User %s %s %s", auditEvent.AuthorName, auditEvent.Action, auditEvent.EntityPath)
 }
