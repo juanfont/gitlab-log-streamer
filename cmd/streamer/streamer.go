@@ -150,6 +150,13 @@ func main() {
 		NoColor:    !colors,
 	})
 
+	logLevelStr := viper.GetString("log_level")
+	logLevel, err := zerolog.ParseLevel(logLevelStr)
+	if err != nil {
+		logLevel = zerolog.InfoLevel
+	}
+	zerolog.SetGlobalLevel(logLevel)
+
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
