@@ -53,13 +53,13 @@ func NewAuditLogStreamer(config Config) (*AuditLogStreamer, error) {
 }
 
 func (s *AuditLogStreamer) Watch() error {
-	// run updateCurrentGitlabVersion() every 5 mins
 	go func() {
 		for {
-			err := s.updateCurrentGitlabVersion()
+			version, err := getCurrentGitlabVersion()
 			if err != nil {
 				log.Error().Caller().Err(err).Msgf("Error while updating current Gitlab version")
 			}
+			s.currentGitlabVersion = version
 			time.Sleep(5 * time.Minute)
 		}
 	}()
