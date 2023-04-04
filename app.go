@@ -42,6 +42,17 @@ func NewAuditLogStreamer(config Config) (*AuditLogStreamer, error) {
 		cfg: config,
 	}
 
+	// run updateCurrentGitlabVersion() every 5 mins
+	go func() {
+		for {
+			err := streamer.updateCurrentGitlabVersion()
+			if err != nil {
+				log.Error().Caller().Err(err).Msgf("Error while updating current Gitlab version")
+			}
+			time.Sleep(5 * time.Minute)
+		}
+	}()
+
 	err := streamer.initDB()
 	if err != nil {
 		return nil, err
@@ -53,17 +64,6 @@ func NewAuditLogStreamer(config Config) (*AuditLogStreamer, error) {
 }
 
 func (s *AuditLogStreamer) Watch() error {
-	go func() {
-		for {
-			version, err := GetCurrentGitlabVersion()
-			if err != nil {
-				log.Error().Caller().Err(err).Msgf("Error while updating current Gitlab version")
-			}
-			s.currentGitlabVersion = version
-			time.Sleep(5 * time.Minute)
-		}
-	}()
-
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		log.Fatal().Caller().Err(err).Msgf("Error creating fsnotify watcher")
