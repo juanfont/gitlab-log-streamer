@@ -32,7 +32,6 @@ type AuditLogStreamer struct {
 }
 
 func NewAuditLogStreamer(config Config) (*AuditLogStreamer, error) {
-
 	// we check if the file exists
 	// if not, we return an error
 	if _, err := os.Stat(config.AuditLogPath); os.IsNotExist(err) {
@@ -42,17 +41,6 @@ func NewAuditLogStreamer(config Config) (*AuditLogStreamer, error) {
 	streamer := &AuditLogStreamer{
 		cfg: config,
 	}
-
-	// run updateCurrentGitlabVersion() every 5 mins
-	go func() {
-		for {
-			err := streamer.updateCurrentGitlabVersion()
-			if err != nil {
-				log.Error().Caller().Err(err).Msgf("Error while updating current Gitlab version")
-			}
-			time.Sleep(5 * time.Minute)
-		}
-	}()
 
 	err := streamer.initDB()
 	if err != nil {
@@ -65,6 +53,17 @@ func NewAuditLogStreamer(config Config) (*AuditLogStreamer, error) {
 }
 
 func (s *AuditLogStreamer) Watch() error {
+	// run updateCurrentGitlabVersion() every 5 mins
+	go func() {
+		for {
+			err := s.updateCurrentGitlabVersion()
+			if err != nil {
+				log.Error().Caller().Err(err).Msgf("Error while updating current Gitlab version")
+			}
+			time.Sleep(5 * time.Minute)
+		}
+	}()
+
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		log.Fatal().Caller().Err(err).Msgf("Error creating fsnotify watcher")

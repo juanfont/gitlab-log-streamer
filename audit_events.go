@@ -163,6 +163,7 @@ func (s *AuditLogStreamer) auditEventToLEEF(auditEvent *AuditEvent) leef.LEEFMes
 	fieldsMap := auditEventFieldsToMap(auditEvent)
 	fieldsMap["msg"] = message
 	fieldsMap["pid"] = fmt.Sprintf("%d", os.Getpid())
+	fieldsMap["sev"] = auditEvent.Severity
 
 	msg := leef.LEEFMessage{
 		SyslogHeader:    syslogHeader,
