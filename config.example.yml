@@ -1,0 +1,19 @@
+---
+db_path: "streamer.sqlite"
+gitlab_hostname: "gitlab.font.eu"
+
+sources:
+  audit_log_path: "/var/log/gitlab/gitlab-rails/audit_json.log"
+
+destinations:
+  http:
+    url: "http://localhost:8080"
+    headers:
+      Authorization: "Bearer 1234567890"
+      Content-Type: "application/json"
+  syslog:
+    server_addr: "localhost:1489"
+    protocol: "udp"
+
+    # Optional. If true, the syslog message will be in LEEF format. Otherwise, syslog in RFC5424 format.
+    use_leef: false
