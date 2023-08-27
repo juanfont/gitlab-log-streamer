@@ -49,6 +49,13 @@ type AuditEvent struct {
 	ExpiryFrom                *string      `json:"expiry_from"`
 	ExpiryTo                  *string      `json:"expiry_to"`
 
+	MetaCallerID        string `json:"meta.caller_id"`
+	MetaRemoteIP        string `json:"meta.remote_ip"`
+	MetaFeatureCategory string `json:"meta.feature_category"`
+	MetaClientID        string `json:"meta.client_id"`
+	MetaUser            string `json:"meta.user,omitempty"`
+	MetaUserID          int    `json:"meta.user_id,omitempty"`
+
 	OriginalData datatypes.JSON
 }
 
