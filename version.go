@@ -32,5 +32,5 @@ func getCurrentGitlabVersion() (string, error) {
 		return version, nil
 	}
 
-	return "", errors.New("Could not get current Gitlab version")
+	return "", errors.New("could not get current Gitlab version")
 }

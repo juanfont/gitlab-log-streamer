@@ -7,6 +7,7 @@ require (
 	github.com/fsnotify/fsnotify v1.6.0
 	github.com/glebarez/sqlite v1.8.0
 	github.com/influxdata/go-syslog v1.0.1
+	github.com/puzpuzpuz/xsync/v3 v3.1.0
 	github.com/rs/zerolog v1.29.1
 	github.com/spf13/cobra v1.7.0
 	github.com/spf13/viper v1.15.0

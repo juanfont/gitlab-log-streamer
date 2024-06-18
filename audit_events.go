@@ -17,7 +17,7 @@ const (
 	AuditEventLoginStandard      = "standard"
 )
 
-func (s *AuditLogStreamer) loadAuditLogEvents() error {
+func (s *AuditLogStreamer) readAuditLogFile() error {
 	content, err := os.ReadFile(s.cfg.AuditLogPath)
 	if err != nil {
 		return err
@@ -43,7 +43,7 @@ func (s *AuditLogStreamer) loadAuditLogEvents() error {
 		auditEvents = append(auditEvents, auditEvent)
 	}
 
-	newEvents, err := s.processAuditLogEvents(auditEvents)
+	newEvents, err := s.processNewAuditLogEvents(auditEvents)
 	if err != nil {
 		return err
 	}
@@ -75,7 +75,7 @@ func (s *AuditLogStreamer) forwardNewAuditLogEvents(auditEvents []*AuditEvent) e
 	return nil
 }
 
-func (s *AuditLogStreamer) processAuditLogEvents(auditEvents []*AuditEvent) ([]*AuditEvent, error) {
+func (s *AuditLogStreamer) processNewAuditLogEvents(auditEvents []*AuditEvent) ([]*AuditEvent, error) {
 	newEvents := []*AuditEvent{}
 
 	for _, auditEvent := range auditEvents {
@@ -83,24 +83,19 @@ func (s *AuditLogStreamer) processAuditLogEvents(auditEvents []*AuditEvent) ([]*
 		// if it does, we skip it
 		// if it doesn't, we insert it
 
-		var count int64
-		err := s.db.Model(&AuditEvent{}).Where("correlation_id = ?", auditEvent.CorrelationID).Count(&count).Error
-		if err != nil {
-			log.Error().Err(err).Msgf("Failed to check if audit event with correlation ID %s already exists", auditEvent.CorrelationID)
-			return newEvents, err
-		}
-
-		if count > 0 {
+		_, ok := s.latestAuditLogEvents.Load(auditEvent.CorrelationID)
+		if ok {
 			log.Debug().Msgf("Audit event with correlation ID %s already exists. Skipping", auditEvent.CorrelationID)
 			continue
 		}
 
-		err = s.db.Create(auditEvent).Error
+		err := s.db.Create(auditEvent).Error
 		if err != nil {
 			log.Error().Err(err).Msgf("Failed to insert audit event with correlation ID %s", auditEvent.CorrelationID)
 			return newEvents, err
 		}
 
+		s.latestAuditLogEvents.Store(auditEvent.CorrelationID, *auditEvent)
 		newEvents = append(newEvents, auditEvent)
 		log.Info().Msgf("Inserted audit event with correlation ID %s", auditEvent.CorrelationID)
 	}
