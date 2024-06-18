@@ -5,12 +5,14 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/puzpuzpuz/xsync/v3"
 	"github.com/rs/zerolog/log"
 	"gorm.io/gorm"
 )
 
 const (
 	GitlabVersionManifestPath = "/opt/gitlab/version-manifest.txt"
+	PreloadEventsPeriodDays   = 30
 )
 
 type Config struct {
@@ -28,6 +30,8 @@ type AuditLogStreamer struct {
 	cfg Config
 	db  *gorm.DB
 
+	latestAuditLogEvents *xsync.MapOf[string, AuditEvent]
+
 	currentGitlabVersion string
 }
 
@@ -39,7 +43,8 @@ func NewAuditLogStreamer(config Config) (*AuditLogStreamer, error) {
 	}
 
 	streamer := &AuditLogStreamer{
-		cfg: config,
+		cfg:                  config,
+		latestAuditLogEvents: xsync.NewMapOf[string, AuditEvent](),
 	}
 
 	// run updateCurrentGitlabVersion() every 5 mins
@@ -58,9 +63,34 @@ func NewAuditLogStreamer(config Config) (*AuditLogStreamer, error) {
 		return nil, err
 	}
 
-	streamer.loadAuditLogEvents()
+	err = streamer.preloadRecentDBEvents()
+	if err != nil {
+		return nil, err
+	}
+
+	err = streamer.readAuditLogFile()
+	if err != nil {
+		return nil, err
+	}
 
 	return streamer, nil
+}
+
+func (s *AuditLogStreamer) preloadRecentDBEvents() error {
+	// load the events from the last preloadEventsPeriodDays from s.db
+	// and insert them into s.latestAuditLogEvents
+
+	events := []*AuditEvent{}
+	err := s.db.Where("created_at > ?", time.Now().AddDate(0, 0, -PreloadEventsPeriodDays)).Find(&events).Error
+	if err != nil {
+		return err
+	}
+
+	for _, event := range events {
+		s.latestAuditLogEvents.Store(event.CorrelationID, *event)
+	}
+
+	return nil
 }
 
 func (s *AuditLogStreamer) Watch() error {
@@ -104,7 +134,7 @@ func (s *AuditLogStreamer) handleEvent(event fsnotify.Event) {
 	case s.cfg.AuditLogPath:
 		if event.Op&fsnotify.Write == fsnotify.Write {
 			log.Info().Caller().Msgf("Audit log file %s modified", event.Name)
-			s.loadAuditLogEvents()
+			s.readAuditLogFile()
 		}
 	}
 }
