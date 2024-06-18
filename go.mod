@@ -1,6 +1,6 @@
 module github.com/juanfont/gitlab-log-streamer
 
-go 1.20
+go 1.22
 
 require (
 	github.com/efekarakus/termcolor v1.0.1
