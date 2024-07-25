@@ -4,10 +4,12 @@ gitlab_hostname: "gitlab.font.eu"
 
 sources:
   audit_log_path: "/var/log/gitlab/gitlab-rails/audit_json.log"
+  auth_log_path: "/var/log/gitlab/gitlab-rails/auth_json.log"
 
 destinations:
   http:
-    url: "http://localhost:8080"
+    audit_log_url: "http://localhost:8080/foo"
+    auth_log_url: "http://localhost:8080/foobar"
     headers:
       Authorization: "Bearer 1234567890"
       Content-Type: "application/json"
