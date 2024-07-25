@@ -17,8 +17,10 @@ const (
 
 type Config struct {
 	AuditLogForwardingEndpoint string
+	AuthLogForwardingEndpoint  string
 	GitlabHostname             string
 	AuditLogPath               string
+	AuthLogPath                string
 	DBpath                     string
 
 	SyslogServerAddr string
@@ -26,25 +28,27 @@ type Config struct {
 	UseLEEF          bool // Use QRadar propietary LEEF format
 }
 
-type AuditLogStreamer struct {
+type GitLabLogStreamer struct {
 	cfg Config
 	db  *gorm.DB
 
 	latestAuditLogEvents *xsync.MapOf[string, AuditEvent]
+	latestAuthEvents     *xsync.MapOf[string, AuthEvent]
 
 	currentGitlabVersion string
 }
 
-func NewAuditLogStreamer(config Config) (*AuditLogStreamer, error) {
+func NewGitLabLogStreamer(config Config) (*GitLabLogStreamer, error) {
 	// we check if the file exists
 	// if not, we return an error
 	if _, err := os.Stat(config.AuditLogPath); os.IsNotExist(err) {
 		return nil, err
 	}
 
-	streamer := &AuditLogStreamer{
+	streamer := &GitLabLogStreamer{
 		cfg:                  config,
 		latestAuditLogEvents: xsync.NewMapOf[string, AuditEvent](),
+		latestAuthEvents:     xsync.NewMapOf[string, AuthEvent](),
 	}
 
 	// run updateCurrentGitlabVersion() every 5 mins
@@ -63,7 +67,7 @@ func NewAuditLogStreamer(config Config) (*AuditLogStreamer, error) {
 		return nil, err
 	}
 
-	err = streamer.preloadRecentDBEvents()
+	err = streamer.preloadDBRecentData()
 	if err != nil {
 		return nil, err
 	}
@@ -73,34 +77,54 @@ func NewAuditLogStreamer(config Config) (*AuditLogStreamer, error) {
 		return nil, err
 	}
 
+	err = streamer.readAuthLogFile()
+	if err != nil {
+		return nil, err
+	}
+
 	return streamer, nil
 }
 
-func (s *AuditLogStreamer) preloadRecentDBEvents() error {
-	// load the events from the last preloadEventsPeriodDays from s.db
+func (s *GitLabLogStreamer) preloadDBRecentData() error {
+	// load the audit log events from the last preloadEventsPeriodDays from s.db
 	// and insert them into s.latestAuditLogEvents
 
-	events := []*AuditEvent{}
-	err := s.db.Where("created_at > ?", time.Now().AddDate(0, 0, -PreloadEventsPeriodDays)).Find(&events).Error
+	auditEvents := []*AuditEvent{}
+	err := s.db.Where("created_at > ?", time.Now().AddDate(0, 0, -PreloadEventsPeriodDays)).Find(&auditEvents).Error
 	if err != nil {
 		return err
 	}
 
-	for _, event := range events {
+	for _, event := range auditEvents {
 		s.latestAuditLogEvents.Store(event.CorrelationID, *event)
+	}
+
+	// load the auth log events from the last preloadEventsPeriodDays from s.db
+	// and insert them into s.latestAuthEvents
+	authEvent := []*AuthEvent{}
+	err = s.db.Where("created_at > ?", time.Now().AddDate(0, 0, -PreloadEventsPeriodDays)).Find(&authEvent).Error
+	if err != nil {
+		return err
+	}
+
+	for _, event := range authEvent {
+		s.latestAuthEvents.Store(event.CorrelationID, *event)
 	}
 
 	return nil
 }
 
-func (s *AuditLogStreamer) Watch() error {
+func (s *GitLabLogStreamer) Watch() error {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		log.Fatal().Caller().Err(err).Msgf("Error creating fsnotify watcher")
 	}
 	defer watcher.Close()
 
-	log.Info().Caller().Msgf("Watching for changes in %s", s.cfg.AuditLogPath)
+	log.Info().Caller().
+		Str("audit_log_path", s.cfg.AuditLogPath).
+		Str("auth_log_path", s.cfg.AuthLogPath).
+		Msgf("Watching for changes in the files")
 
 	done := make(chan bool)
 	go func() {
@@ -110,7 +134,7 @@ func (s *AuditLogStreamer) Watch() error {
 				if !ok {
 					return
 				}
-				s.handleEvent(event)
+				s.handleFileEvent(event)
 			case err, ok := <-watcher.Errors:
 				if !ok {
 					return
@@ -122,19 +146,31 @@ func (s *AuditLogStreamer) Watch() error {
 
 	err = watcher.Add(s.cfg.AuditLogPath)
 	if err != nil {
-		log.Fatal().Caller().Err(err)
+		log.Fatal().Caller().Err(err).Msg("Error adding audit log file to watcher")
 	}
+
+	err = watcher.Add(s.cfg.AuthLogPath)
+	if err != nil {
+		log.Fatal().Caller().Err(err).Msg("Error adding auth log file to watcher")
+	}
+
 	<-done
 
 	return nil
 }
 
-func (s *AuditLogStreamer) handleEvent(event fsnotify.Event) {
+func (s *GitLabLogStreamer) handleFileEvent(event fsnotify.Event) {
 	switch event.Name {
 	case s.cfg.AuditLogPath:
 		if event.Op&fsnotify.Write == fsnotify.Write {
 			log.Info().Caller().Msgf("Audit log file %s modified", event.Name)
 			s.readAuditLogFile()
+		}
+
+	case s.cfg.AuthLogPath:
+		if event.Op&fsnotify.Write == fsnotify.Write {
+			log.Info().Caller().Msgf("Auth log file %s modified", event.Name)
+			s.readAuthLogFile()
 		}
 	}
 }

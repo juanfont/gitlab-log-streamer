@@ -11,9 +11,11 @@ import (
 
 func getStreamerConfig() (streamer.Config, error) {
 	cfg := streamer.Config{
-		AuditLogForwardingEndpoint: viper.GetString("destinations.http.url"),
+		AuditLogForwardingEndpoint: viper.GetString("destinations.http.audit_log_url"),
+		AuthLogForwardingEndpoint:  viper.GetString("destinations.http.auth_log_url"),
 		GitlabHostname:             viper.GetString("gitlab_hostname"),
 		AuditLogPath:               viper.GetString("sources.audit_log_path"),
+		AuthLogPath:                viper.GetString("sources.auth_log_path"),
 		DBpath:                     viper.GetString("db_path"),
 		SyslogServerAddr:           viper.GetString("destinations.syslog.server_addr"),
 		SyslogProtocol:             viper.GetString("destinations.syslog.protocol"),

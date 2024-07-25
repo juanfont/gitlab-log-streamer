@@ -16,7 +16,7 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-func (s *AuditLogStreamer) forwardNewAuditLogEventsHTTP(auditEvents []*AuditEvent) error {
+func (s *GitLabLogStreamer) forwardNewAuditLogEventsHTTP(auditEvents []*AuditEvent) error {
 	client := &http.Client{
 		Timeout: 10 * time.Second,
 	}
@@ -43,7 +43,34 @@ func (s *AuditLogStreamer) forwardNewAuditLogEventsHTTP(auditEvents []*AuditEven
 	return nil
 }
 
-func (s *AuditLogStreamer) forwardNewAuditLogEventsSyslog(auditEvents []*AuditEvent) error {
+func (s *GitLabLogStreamer) forwardNewAuthEventsHTTP(authEvents []*AuthEvent) error {
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+
+	for _, auditEvent := range authEvents {
+		data, err := json.Marshal(auditEvent)
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to marshal auth event")
+			continue
+		}
+
+		_, err = client.Post(s.cfg.AuthLogForwardingEndpoint,
+			"application/json",
+			bytes.NewReader(data),
+		)
+		if err != nil {
+			continue
+		}
+
+		log.Info().Msg("Auth event forwarded via HTTP")
+
+	}
+
+	return nil
+}
+
+func (s *GitLabLogStreamer) forwardNewAuditLogEventsSyslog(auditEvents []*AuditEvent) error {
 	conn, err := net.Dial(s.cfg.SyslogProtocol, s.cfg.SyslogServerAddr)
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to connect to syslog server")
@@ -72,7 +99,36 @@ func (s *AuditLogStreamer) forwardNewAuditLogEventsSyslog(auditEvents []*AuditEv
 	return nil
 }
 
-func (s *AuditLogStreamer) auditEventToLEEF(auditEvent *AuditEvent) leef.LEEFMessage {
+func (s *GitLabLogStreamer) forwardNewAuthEventsSyslog(authEvents []*AuthEvent) error {
+	conn, err := net.Dial(s.cfg.SyslogProtocol, s.cfg.SyslogServerAddr)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to connect to syslog server")
+		return err
+	}
+	defer conn.Close()
+
+	for _, authEvent := range authEvents {
+		var str string
+		if s.cfg.UseLEEF {
+			str = s.authEventToLEEF(authEvent).String()
+		} else {
+			syslogMsg := s.authEventToSyslogMessage(authEvent)
+			str, _ = syslogMsg.String()
+		}
+
+		log.Info().Msg(str)
+
+		_, err = conn.Write([]byte(str + "\n"))
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to send syslog message")
+			continue
+		}
+	}
+
+	return nil
+}
+
+func (s *GitLabLogStreamer) auditEventToLEEF(auditEvent *AuditEvent) leef.LEEFMessage {
 	syslogHeader := leef.SyslogRFC5424Header{
 		Priority:  13*8 + logLevelStringToSyslog(auditEvent.Severity), // facility 13 is "security/authorization"
 		Timestamp: auditEvent.Time.Format(time.RFC3339),
@@ -99,7 +155,34 @@ func (s *AuditLogStreamer) auditEventToLEEF(auditEvent *AuditEvent) leef.LEEFMes
 	return msg
 }
 
-func (s *AuditLogStreamer) auditEventToSyslogMessage(auditEvent *AuditEvent) rfc5424.SyslogMessage {
+func (s *GitLabLogStreamer) authEventToLEEF(authEvent *AuthEvent) leef.LEEFMessage {
+	syslogHeader := leef.SyslogRFC5424Header{
+		Priority:  13*8 + logLevelStringToSyslog(authEvent.Severity), // facility 13 is "security/authorization"
+		Timestamp: authEvent.Time.Format(time.RFC3339),
+		Hostname:  s.cfg.GitlabHostname,
+	}
+
+	messageID := getAuthEventMessageType(authEvent)
+	fieldsMap := authEventFieldsToMap(authEvent)
+	fieldsMap["msg"] = messageID
+	fieldsMap["pid"] = fmt.Sprintf("%d", os.Getpid())
+	fieldsMap["sev"] = authEvent.Severity
+
+	msg := leef.LEEFMessage{
+		SyslogHeader:    syslogHeader,
+		LEEFVersion:     "2.0",
+		Vendor:          "GitLab Inc.",
+		Product:         "GitLab",
+		Version:         s.currentGitlabVersion,
+		EventID:         messageID,
+		Separator:       "^",
+		EventAttributes: fieldsMap,
+	}
+
+	return msg
+}
+
+func (s *GitLabLogStreamer) auditEventToSyslogMessage(auditEvent *AuditEvent) rfc5424.SyslogMessage {
 	msg := rfc5424.SyslogMessage{}
 
 	facility := 13 // audit log
@@ -125,9 +208,60 @@ func (s *AuditLogStreamer) auditEventToSyslogMessage(auditEvent *AuditEvent) rfc
 	return msg
 }
 
+func (s *GitLabLogStreamer) authEventToSyslogMessage(authEvent *AuthEvent) rfc5424.SyslogMessage {
+	msg := rfc5424.SyslogMessage{}
+
+	facility := 13 // audit log
+	priority := facility*8 + logLevelStringToSyslog(authEvent.Severity)
+
+	msg.SetPriority(uint8(priority))
+	msg.SetVersion(1)
+
+	msg.SetTimestamp(authEvent.Time.Format(time.RFC3339))
+	msg.SetAppname("gitlab")
+	msg.SetHostname(s.cfg.GitlabHostname)
+	msg.SetProcID(fmt.Sprintf("%d", os.Getpid()))
+
+	fieldsMap := authEventFieldsToMap(authEvent)
+	for k, v := range fieldsMap {
+		msg.SetParameter("audit_event", k, fmt.Sprintf("%v", v))
+	}
+
+	messageID := getAuthEventMessageType(authEvent)
+	msg.SetMsgID(messageID)
+	msg.SetMessage(messageID)
+
+	return msg
+}
+
 func auditEventFieldsToMap(auditEvent *AuditEvent) map[string]string {
 	fieldMap := map[string]string{}
 	reflectValue := reflect.ValueOf(*auditEvent)
+	for i := 0; i < reflectValue.NumField(); i++ {
+		fieldName := reflectValue.Type().Field(i).Name
+		if fieldName == "" {
+			continue
+		}
+
+		fieldValue := reflectValue.Field(i).Interface()
+
+		// check if fieldValue is a pointer
+		// if it is, we need to dereference it
+		if reflectValue.Field(i).Kind() == reflect.Ptr && !reflectValue.Field(i).IsNil() {
+			fieldValue = reflectValue.Field(i).Elem().Interface()
+		}
+
+		if reflectValue.Field(i).Kind() != reflect.Ptr || !reflectValue.Field(i).IsNil() {
+			fieldMap[fieldName] = fmt.Sprintf("%v", fieldValue)
+		}
+	}
+
+	return fieldMap
+}
+
+func authEventFieldsToMap(authEvent *AuthEvent) map[string]string {
+	fieldMap := map[string]string{}
+	reflectValue := reflect.ValueOf(*authEvent)
 	for i := 0; i < reflectValue.NumField(); i++ {
 		fieldName := reflectValue.Type().Field(i).Name
 		if fieldName == "" {

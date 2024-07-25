@@ -17,7 +17,7 @@ const (
 	AuditEventLoginStandard      = "standard"
 )
 
-func (s *AuditLogStreamer) readAuditLogFile() error {
+func (s *GitLabLogStreamer) readAuditLogFile() error {
 	content, err := os.ReadFile(s.cfg.AuditLogPath)
 	if err != nil {
 		return err
@@ -56,7 +56,7 @@ func (s *AuditLogStreamer) readAuditLogFile() error {
 	return nil
 }
 
-func (s *AuditLogStreamer) forwardNewAuditLogEvents(auditEvents []*AuditEvent) error {
+func (s *GitLabLogStreamer) forwardNewAuditLogEvents(auditEvents []*AuditEvent) error {
 	if s.cfg.AuditLogForwardingEndpoint != "" {
 		log.Info().Msgf("Forwarding %d audit events to HTTP endpoint %s", len(auditEvents), s.cfg.AuditLogForwardingEndpoint)
 		err := s.forwardNewAuditLogEventsHTTP(auditEvents)
@@ -75,7 +75,7 @@ func (s *AuditLogStreamer) forwardNewAuditLogEvents(auditEvents []*AuditEvent) e
 	return nil
 }
 
-func (s *AuditLogStreamer) processNewAuditLogEvents(auditEvents []*AuditEvent) ([]*AuditEvent, error) {
+func (s *GitLabLogStreamer) processNewAuditLogEvents(auditEvents []*AuditEvent) ([]*AuditEvent, error) {
 	newEvents := []*AuditEvent{}
 
 	for _, auditEvent := range auditEvents {
@@ -105,7 +105,7 @@ func (s *AuditLogStreamer) processNewAuditLogEvents(auditEvents []*AuditEvent) (
 	return newEvents, nil
 }
 
-func (s *AuditLogStreamer) parseAuditLogEvent(line string) (*AuditEvent, error) {
+func (s *GitLabLogStreamer) parseAuditLogEvent(line string) (*AuditEvent, error) {
 	auditEvent := &AuditEvent{}
 
 	err := json.Unmarshal([]byte(line), auditEvent)

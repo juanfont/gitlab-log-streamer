@@ -8,7 +8,7 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-func (s *AuditLogStreamer) updateCurrentGitlabVersion() error {
+func (s *GitLabLogStreamer) updateCurrentGitlabVersion() error {
 	log.Debug().Msg("Updating current Gitlab version")
 	version, err := getCurrentGitlabVersion()
 	if err != nil {
