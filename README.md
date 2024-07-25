@@ -2,11 +2,11 @@
 
 [![License](https://img.shields.io/badge/License-BSD_3--Clause-blue.svg)](https://opensource.org/licenses/BSD-3-Clause)
 
-Gitlab Log Streamer is a tool designed to overcome the limitations of Gitlab's `audit_log.json` and potentially other logs.
+Gitlab Log Streamer is a tool designed to overcome the limitations of Gitlab's `audit_log.json` and `auth_log.json`.
 
 By default, Gitlab writes its audit events to the `audit_log.json` file, which limits their usefulness as they stay in your GItLab server filesystem.
 
-This project parses the log file, stores the events in a SQLite database, and allows forwarding of new log entries using syslog format (RFC5424) or IBM QRadar's proprietary LEEF. It also supports defining an HTTP endpoint for POST requests with the event, enabling triggers and actions similar to Gitlab System hooks.
+This project parses the log files, stores the events in a SQLite database, and allows forwarding of new log entries using syslog format (RFC5424) or IBM QRadar's proprietary LEEF. It also supports defining an HTTP endpoint for POST requests with the event, enabling triggers and actions similar to Gitlab System hooks.
 
 ## Table of Contents
 
@@ -32,6 +32,8 @@ gitlab_hostname: "gitlab.font.eu"
 
 sources:
   audit_log_path: "/var/log/gitlab/gitlab-rails/audit_json.log"
+  auth_log_path: "/var/log/gitlab/gitlab-rails/auth_json.log"
+
 
 destinations:
   http:
