@@ -20,7 +20,7 @@ var watchCmd = &cobra.Command{
 			log.Fatal().Err(err)
 		}
 
-		app, err := streamer.NewAuditLogStreamer(cfg)
+		app, err := streamer.NewGitLabLogStreamer(cfg)
 		if err != nil {
 			log.Fatal().Err(err).Msg("Could not create streamer")
 		}

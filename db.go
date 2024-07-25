@@ -8,7 +8,7 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-func (s *AuditLogStreamer) initDB() error {
+func (s *GitLabLogStreamer) initDB() error {
 	db, err := s.openDB()
 	if err != nil {
 		return err
@@ -18,7 +18,7 @@ func (s *AuditLogStreamer) initDB() error {
 	return nil
 }
 
-func (s *AuditLogStreamer) openDB() (*gorm.DB, error) {
+func (s *GitLabLogStreamer) openDB() (*gorm.DB, error) {
 	var db *gorm.DB
 	var err error
 
@@ -47,6 +47,11 @@ func (s *AuditLogStreamer) openDB() (*gorm.DB, error) {
 	sqlDB.SetConnMaxIdleTime(time.Hour)
 
 	err = db.AutoMigrate(&AuditEvent{})
+	if err != nil {
+		return nil, err
+	}
+
+	err = db.AutoMigrate(&AuthEvent{})
 	if err != nil {
 		return nil, err
 	}
