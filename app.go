@@ -90,7 +90,7 @@ func (s *GitLabLogStreamer) preloadDBRecentData() error {
 	// and insert them into s.latestAuditLogEvents
 
 	auditEvents := []*AuditEvent{}
-	err := s.db.Where("created_at > ?", time.Now().AddDate(0, 0, -PreloadEventsPeriodDays)).Find(&auditEvents).Error
+	err := s.db.Where("time > ?", time.Now().AddDate(0, 0, -PreloadEventsPeriodDays)).Find(&auditEvents).Error
 	if err != nil {
 		return err
 	}
@@ -102,7 +102,7 @@ func (s *GitLabLogStreamer) preloadDBRecentData() error {
 	// load the auth log events from the last preloadEventsPeriodDays from s.db
 	// and insert them into s.latestAuthEvents
 	authEvent := []*AuthEvent{}
-	err = s.db.Where("created_at > ?", time.Now().AddDate(0, 0, -PreloadEventsPeriodDays)).Find(&authEvent).Error
+	err = s.db.Where("time > ?", time.Now().AddDate(0, 0, -PreloadEventsPeriodDays)).Find(&authEvent).Error
 	if err != nil {
 		return err
 	}
