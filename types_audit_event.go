@@ -24,7 +24,6 @@ type AuditEvent struct {
 	AuthorName    string      `json:"author_name"`
 	EntityID      int64       `json:"entity_id"`
 	EntityType    AuthorClass `json:"entity_type"`
-	CreatedAt     time.Time   `json:"created_at"`
 	IPAddress     string      `json:"ip_address"`
 	With          *With       `json:"with,omitempty"`
 	TargetID      *int64      `json:"target_id"`
