@@ -10,7 +10,7 @@ import (
 )
 
 func (s *GitLabLogStreamer) readAuthLogFile() error {
-	content, err := os.ReadFile(s.cfg.AuditLogPath)
+	content, err := os.ReadFile(s.cfg.AuthLogPath)
 	if err != nil {
 		return err
 	}
@@ -40,6 +40,11 @@ func (s *GitLabLogStreamer) readAuthLogFile() error {
 		return err
 	}
 
+	if len(newEvents) == 0 {
+		log.Warn().
+			Msg("No new auth events to forward, but a full read was requested")
+	}
+
 	err = s.forwardNewAuthEvents(newEvents)
 	if err != nil {
 		return err
@@ -53,7 +58,7 @@ func (s *GitLabLogStreamer) forwardNewAuthEvents(authEvents []*AuthEvent) error 
 		log.Info().
 			Int("events", len(authEvents)).
 			Str("endpoint", s.cfg.AuditLogForwardingEndpoint).
-			Msgf("Forwarding %d auth events to HTTP endpoint")
+			Msgf("Forwarding auth events to HTTP endpoint")
 		err := s.forwardNewAuthEventsHTTP(authEvents)
 		if err != nil {
 			log.Warn().
@@ -106,7 +111,6 @@ func (s *GitLabLogStreamer) processNewAuthEvents(authEvents []*AuthEvent) ([]*Au
 
 func (s *GitLabLogStreamer) parseAuthEvent(line string) (*AuthEvent, error) {
 	authEvent := &AuthEvent{}
-
 	err := json.Unmarshal([]byte(line), authEvent)
 	if err != nil {
 		return nil, err
