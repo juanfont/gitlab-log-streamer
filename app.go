@@ -13,6 +13,8 @@ import (
 const (
 	GitlabVersionManifestPath = "/opt/gitlab/version-manifest.txt"
 	PreloadEventsPeriodDays   = 30
+
+	CleanAuthLogEventsPeriod = 60 * time.Hour * 24 // time to keep the auth events in the DB
 )
 
 type Config struct {
@@ -81,6 +83,8 @@ func NewGitLabLogStreamer(config Config) (*GitLabLogStreamer, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	go streamer.cleanOldEvents()
 
 	return streamer, nil
 }
@@ -172,5 +176,17 @@ func (s *GitLabLogStreamer) handleFileEvent(event fsnotify.Event) {
 			log.Info().Caller().Msgf("Auth log file %s modified", event.Name)
 			s.readAuthLogFile()
 		}
+	}
+}
+
+func (s *GitLabLogStreamer) cleanOldEvents() {
+	// remove events older than CleanAuthLogEventsPeriod from s.db
+
+	for {
+		err := s.db.Where("time < ?", time.Now().Add(-CleanAuthLogEventsPeriod)).Delete(&AuthEvent{}).Error
+		if err != nil {
+			log.Error().Caller().Err(err).Msg("Error while deleting old auth events")
+		}
+		time.Sleep(1 * time.Hour)
 	}
 }
