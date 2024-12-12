@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/rs/zerolog/log"
 )
@@ -83,9 +84,9 @@ func (s *GitLabLogStreamer) processNewAuditLogEvents(auditEvents []*AuditEvent) 
 		// if it does, we skip it
 		// if it doesn't, we insert it
 
-		_, ok := s.latestAuditLogEvents.Load(auditEvent.CorrelationID)
+		_, ok := s.latestAuditLogEvents.Load(fmt.Sprintf("%s,%s", auditEvent.CorrelationID, auditEvent.Time.Format(time.RFC3339)))
 		if ok {
-			log.Debug().Msgf("Audit event with correlation ID %s already exists. Skipping", auditEvent.CorrelationID)
+			log.Debug().Msgf("Audit event with correlation ID %s at %s already exists. Skipping", auditEvent.CorrelationID, auditEvent.Time.Format(time.RFC3339))
 			continue
 		}
 
@@ -95,7 +96,7 @@ func (s *GitLabLogStreamer) processNewAuditLogEvents(auditEvents []*AuditEvent) 
 			return newEvents, err
 		}
 
-		s.latestAuditLogEvents.Store(auditEvent.CorrelationID, *auditEvent)
+		s.latestAuditLogEvents.Store(fmt.Sprintf("%s,%s", auditEvent.CorrelationID, auditEvent.Time.Format(time.RFC3339)), *auditEvent)
 		newEvents = append(newEvents, auditEvent)
 		log.Info().Msgf("Inserted audit event with correlation ID %s", auditEvent.CorrelationID)
 	}
@@ -167,7 +168,7 @@ func auditEventToUserMessageType(auditEvent *AuditEvent) (string, string) {
 		return "User event - remove", fmt.Sprintf("User %s removed %s for %s", auditEvent.AuthorName, *auditEvent.Remove, auditEvent.EntityPath)
 	}
 
-	return "User event - unknown", fmt.Sprintf("User %s %s (target %s)", auditEvent.AuthorName, auditEvent.Action, auditEvent.EntityPath)
+	return "User event - unknown", fmt.Sprintf("User %s %s (target %s)", auditEvent.AuthorName, *auditEvent.Action, auditEvent.EntityPath)
 }
 
 func auditEventToProjectMessageType(auditEvent *AuditEvent) (string, string) {

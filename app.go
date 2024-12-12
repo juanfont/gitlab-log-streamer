@@ -1,6 +1,7 @@
 package streamer
 
 import (
+	"fmt"
 	"os"
 	"time"
 
@@ -100,7 +101,7 @@ func (s *GitLabLogStreamer) preloadDBRecentData() error {
 	}
 
 	for _, event := range auditEvents {
-		s.latestAuditLogEvents.Store(event.CorrelationID, *event)
+		s.latestAuditLogEvents.Store(fmt.Sprintf("%s,%s", event.CorrelationID, event.Time.Format(time.RFC3339)), *event)
 	}
 
 	// load the auth log events from the last preloadEventsPeriodDays from s.db
@@ -112,7 +113,7 @@ func (s *GitLabLogStreamer) preloadDBRecentData() error {
 	}
 
 	for _, event := range authEvent {
-		s.latestAuthEvents.Store(event.CorrelationID, *event)
+		s.latestAuthEvents.Store(fmt.Sprintf("%s,%s", event.CorrelationID, event.Time.Format(time.RFC3339)), *event)
 	}
 
 	return nil

@@ -16,7 +16,7 @@ const (
 
 type AuditEvent struct {
 	ID            uint64 `gorm:"primary_key" json:"-"`
-	CorrelationID string `gorm:"type:varchar(64);unique_index" json:"correlation_id"`
+	CorrelationID string `gorm:"type:varchar(64)" json:"correlation_id"`
 
 	Severity      string      `json:"severity"`
 	Time          time.Time   `json:"time"`
