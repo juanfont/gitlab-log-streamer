@@ -148,6 +148,8 @@ func auditEventToUserMessageType(auditEvent *AuditEvent) (string, string) {
 			return "User logged in", fmt.Sprintf("User %s logged in", auditEvent.AuthorName)
 		case "saml":
 			return "User logged in with SAML", fmt.Sprintf("User %s logged in with SAML", auditEvent.AuthorName)
+		case "openid_connect":
+			return "User logged in with OpenID Connect", fmt.Sprintf("User %s logged in with OpenID Connect", auditEvent.AuthorName)
 		default:
 			return "User logged in with unknown method", fmt.Sprintf("User %s logged in with unknown method (%s)", auditEvent.AuthorName, *auditEvent.With)
 		}
