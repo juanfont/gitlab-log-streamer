@@ -89,7 +89,7 @@ func (s *GitLabLogStreamer) processNewAuthEvents(authEvents []*AuthEvent) ([]*Au
 		// if it does, we skip it
 		// if it doesn't, we insert it
 
-		_, ok := s.latestAuthEvents.Load(fmt.Sprintf("%s,%s", authEvent.CorrelationID, authEvent.Time.Format(time.RFC3339)))
+		_, ok := s.latestAuthEvents.Load(fmt.Sprintf("%s,%d", authEvent.CorrelationID, authEvent.Time.UnixNano()))
 		if ok {
 			log.Debug().Msgf("Auth event with correlation ID %s at %s already exists. Skipping", authEvent.CorrelationID, authEvent.Time.Format(time.RFC3339))
 			continue
@@ -101,7 +101,7 @@ func (s *GitLabLogStreamer) processNewAuthEvents(authEvents []*AuthEvent) ([]*Au
 			return newEvents, err
 		}
 
-		s.latestAuthEvents.Store(fmt.Sprintf("%s,%s", authEvent.CorrelationID, authEvent.Time.Format(time.RFC3339)), *authEvent)
+		s.latestAuthEvents.Store(fmt.Sprintf("%s,%d", authEvent.CorrelationID, authEvent.Time.UnixNano()), *authEvent)
 		newEvents = append(newEvents, authEvent)
 		log.Info().Msgf("Inserted auth event with correlation ID %s", authEvent.CorrelationID)
 	}
