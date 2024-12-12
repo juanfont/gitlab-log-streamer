@@ -3,8 +3,10 @@ package streamer
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/rs/zerolog/log"
 )
@@ -87,9 +89,9 @@ func (s *GitLabLogStreamer) processNewAuthEvents(authEvents []*AuthEvent) ([]*Au
 		// if it does, we skip it
 		// if it doesn't, we insert it
 
-		_, ok := s.latestAuthEvents.Load(authEvent.CorrelationID)
+		_, ok := s.latestAuthEvents.Load(fmt.Sprintf("%s,%s", authEvent.CorrelationID, authEvent.Time.Format(time.RFC3339)))
 		if ok {
-			log.Debug().Msgf("Auth event with correlation ID %s already exists. Skipping", authEvent.CorrelationID)
+			log.Debug().Msgf("Auth event with correlation ID %s at %s already exists. Skipping", authEvent.CorrelationID, authEvent.Time.Format(time.RFC3339))
 			continue
 		}
 
@@ -99,7 +101,7 @@ func (s *GitLabLogStreamer) processNewAuthEvents(authEvents []*AuthEvent) ([]*Au
 			return newEvents, err
 		}
 
-		s.latestAuthEvents.Store(authEvent.CorrelationID, *authEvent)
+		s.latestAuthEvents.Store(fmt.Sprintf("%s,%s", authEvent.CorrelationID, authEvent.Time.Format(time.RFC3339)), *authEvent)
 		newEvents = append(newEvents, authEvent)
 		log.Info().Msgf("Inserted auth event with correlation ID %s", authEvent.CorrelationID)
 	}
