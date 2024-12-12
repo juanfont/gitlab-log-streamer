@@ -84,7 +84,7 @@ func (s *GitLabLogStreamer) processNewAuditLogEvents(auditEvents []*AuditEvent) 
 		// if it does, we skip it
 		// if it doesn't, we insert it
 
-		_, ok := s.latestAuditLogEvents.Load(fmt.Sprintf("%s,%s", auditEvent.CorrelationID, auditEvent.Time.Format(time.RFC3339)))
+		_, ok := s.latestAuditLogEvents.Load(fmt.Sprintf("%s,%d", auditEvent.CorrelationID, auditEvent.Time.UnixNano()))
 		if ok {
 			log.Debug().Msgf("Audit event with correlation ID %s at %s already exists. Skipping", auditEvent.CorrelationID, auditEvent.Time.Format(time.RFC3339))
 			continue
@@ -96,7 +96,7 @@ func (s *GitLabLogStreamer) processNewAuditLogEvents(auditEvents []*AuditEvent) 
 			return newEvents, err
 		}
 
-		s.latestAuditLogEvents.Store(fmt.Sprintf("%s,%s", auditEvent.CorrelationID, auditEvent.Time.Format(time.RFC3339)), *auditEvent)
+		s.latestAuditLogEvents.Store(fmt.Sprintf("%s,%d", auditEvent.CorrelationID, auditEvent.Time.UnixNano()), *auditEvent)
 		newEvents = append(newEvents, auditEvent)
 		log.Info().Msgf("Inserted audit event with correlation ID %s", auditEvent.CorrelationID)
 	}
