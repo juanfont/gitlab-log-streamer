@@ -19,3 +19,9 @@
 /config.json
 /config.toml
 /streamer
+
+
+
+# Internal stuff
+/compile_and_deploy.sh
+/Makefile

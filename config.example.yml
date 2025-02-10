@@ -2,6 +2,8 @@
 db_path: "streamer.sqlite"
 gitlab_hostname: "gitlab.font.eu"
 
+listen_addr: "127.0.0.1:8080"
+
 sources:
   audit_log_path: "/var/log/gitlab/gitlab-rails/audit_json.log"
   auth_log_path: "/var/log/gitlab/gitlab-rails/auth_json.log"

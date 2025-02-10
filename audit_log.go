@@ -1,7 +1,6 @@
 package streamer
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -24,12 +23,10 @@ func (s *GitLabLogStreamer) readAuditLogFile() error {
 		return err
 	}
 
-	scanner := bufio.NewScanner(strings.NewReader(string(content)))
-	scanner.Split(bufio.ScanLines)
-
+	lines := strings.Split(string(content), "\n")
 	auditEvents := []*AuditEvent{}
-	for scanner.Scan() {
-		line := scanner.Text()
+
+	for _, line := range lines {
 		if line == "" {
 			log.Warn().Msg("Empty line in audit log")
 			continue
@@ -98,6 +95,7 @@ func (s *GitLabLogStreamer) processNewAuditLogEvents(auditEvents []*AuditEvent) 
 
 		s.latestAuditLogEvents.Store(fmt.Sprintf("%s,%d", auditEvent.CorrelationID, auditEvent.Time.UnixNano()), *auditEvent)
 		newEvents = append(newEvents, auditEvent)
+		auditLogEventsReceived.Inc()
 		log.Info().Msgf("Inserted audit event with correlation ID %s", auditEvent.CorrelationID)
 	}
 

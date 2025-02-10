@@ -11,6 +11,7 @@ import (
 
 func getStreamerConfig() (streamer.Config, error) {
 	cfg := streamer.Config{
+		ListenAddr:                 viper.GetString("listen_addr"),
 		AuditLogForwardingEndpoint: viper.GetString("destinations.http.audit_log_url"),
 		AuthLogForwardingEndpoint:  viper.GetString("destinations.http.auth_log_url"),
 		GitlabHostname:             viper.GetString("gitlab_hostname"),

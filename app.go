@@ -2,10 +2,13 @@ package streamer
 
 import (
 	"fmt"
+	"net/http"
 	"os"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/gorilla/mux"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/puzpuzpuz/xsync/v3"
 	"github.com/rs/zerolog/log"
 	"gorm.io/gorm"
@@ -19,6 +22,7 @@ const (
 )
 
 type Config struct {
+	ListenAddr                 string
 	AuditLogForwardingEndpoint string
 	AuthLogForwardingEndpoint  string
 	GitlabHostname             string
@@ -120,6 +124,15 @@ func (s *GitLabLogStreamer) preloadDBRecentData() error {
 }
 
 func (s *GitLabLogStreamer) Watch() error {
+	router := mux.NewRouter()
+	router.Handle("/metrics", promhttp.Handler())
+	router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("OK"))
+	})
+	go http.ListenAndServe(s.cfg.ListenAddr, router)
+	log.Info().Caller().Msgf("Listening observability on %s", s.cfg.ListenAddr)
+
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		log.Fatal().Caller().Err(err).Msgf("Error creating fsnotify watcher")
