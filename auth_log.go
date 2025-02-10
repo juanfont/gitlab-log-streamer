@@ -1,7 +1,6 @@
 package streamer
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -17,12 +16,10 @@ func (s *GitLabLogStreamer) readAuthLogFile() error {
 		return err
 	}
 
-	scanner := bufio.NewScanner(strings.NewReader(string(content)))
-	scanner.Split(bufio.ScanLines)
-
+	lines := strings.Split(string(content), "\n")
 	authEvents := []*AuthEvent{}
-	for scanner.Scan() {
-		line := scanner.Text()
+
+	for _, line := range lines {
 		if line == "" {
 			log.Warn().Msg("Empty line in auth log")
 			continue
@@ -103,6 +100,9 @@ func (s *GitLabLogStreamer) processNewAuthEvents(authEvents []*AuthEvent) ([]*Au
 
 		s.latestAuthEvents.Store(fmt.Sprintf("%s,%d", authEvent.CorrelationID, authEvent.Time.UnixNano()), *authEvent)
 		newEvents = append(newEvents, authEvent)
+
+		authLogEventsReceived.Inc()
+
 		log.Info().Msgf("Inserted auth event with correlation ID %s", authEvent.CorrelationID)
 	}
 
