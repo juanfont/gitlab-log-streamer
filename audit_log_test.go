@@ -116,6 +116,24 @@ func TestGetAuditEventMessageTypeGroup(t *testing.T) {
 	}
 }
 
+func TestGetAuditEventMessageTypeUserFallbackNilAction(t *testing.T) {
+	// A User event with no With/Add/CustomMessage/Remove and a nil Action
+	// must not panic (it previously dereferenced a nil *Action).
+	event := &AuditEvent{
+		EntityType: AuthorClassUser,
+		AuthorName: "juan",
+		EntityPath: "juan",
+	}
+
+	msgID, msg := getAuditEventMessageType(event)
+	if msgID != "User event - unknown" {
+		t.Errorf("message ID = %q, want %q", msgID, "User event - unknown")
+	}
+	if !strings.Contains(msg, "unknown action") {
+		t.Errorf("message %q should mention the unknown action fallback", msg)
+	}
+}
+
 func TestGetAuditEventMessageTypeUnknownEntity(t *testing.T) {
 	event := &AuditEvent{EntityType: "Wormhole"}
 

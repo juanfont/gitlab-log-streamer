@@ -165,7 +165,12 @@ func auditEventToUserMessageType(auditEvent *AuditEvent) (string, string) {
 		return "User event - remove", fmt.Sprintf("User %s removed %s for %s", auditEvent.AuthorName, *auditEvent.Remove, auditEvent.EntityPath)
 	}
 
-	return "User event - unknown", fmt.Sprintf("User %s %s (target %s)", auditEvent.AuthorName, *auditEvent.Action, auditEvent.EntityPath)
+	action := "unknown action"
+	if auditEvent.Action != nil {
+		action = *auditEvent.Action
+	}
+
+	return "User event - unknown", fmt.Sprintf("User %s %s (target %s)", auditEvent.AuthorName, action, auditEvent.EntityPath)
 }
 
 func auditEventToProjectMessageType(auditEvent *AuditEvent) (string, string) {

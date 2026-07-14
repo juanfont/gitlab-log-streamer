@@ -130,7 +130,11 @@ func (s *GitLabLogStreamer) Watch() error {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK"))
 	})
-	go http.ListenAndServe(s.cfg.ListenAddr, router)
+	go func() {
+		if err := http.ListenAndServe(s.cfg.ListenAddr, router); err != nil {
+			log.Fatal().Caller().Err(err).Msgf("Observability server failed on %s", s.cfg.ListenAddr)
+		}
+	}()
 	log.Info().Caller().Msgf("Listening observability on %s", s.cfg.ListenAddr)
 
 	watcher, err := fsnotify.NewWatcher()
@@ -182,13 +186,17 @@ func (s *GitLabLogStreamer) handleFileEvent(event fsnotify.Event) {
 	case s.cfg.AuditLogPath:
 		if event.Op&fsnotify.Write == fsnotify.Write {
 			log.Info().Caller().Msgf("Audit log file %s modified", event.Name)
-			s.readAuditLogFile()
+			if err := s.readAuditLogFile(); err != nil {
+				log.Error().Caller().Err(err).Msg("Error reading audit log file")
+			}
 		}
 
 	case s.cfg.AuthLogPath:
 		if event.Op&fsnotify.Write == fsnotify.Write {
 			log.Info().Caller().Msgf("Auth log file %s modified", event.Name)
-			s.readAuthLogFile()
+			if err := s.readAuthLogFile(); err != nil {
+				log.Error().Caller().Err(err).Msg("Error reading auth log file")
+			}
 		}
 	}
 }
@@ -201,6 +209,32 @@ func (s *GitLabLogStreamer) cleanOldEvents() {
 		if err != nil {
 			log.Error().Caller().Err(err).Msg("Error while deleting old auth events")
 		}
+
+		s.evictOldDedupEntries()
+
 		time.Sleep(1 * time.Hour)
 	}
+}
+
+// evictOldDedupEntries drops entries from the in-memory dedup maps once they
+// fall outside the preload window. Without this the maps grow for the whole
+// process lifetime. This is safe as long as the log files no longer contain
+// events older than the window (GitLab rotates them), which is the same
+// assumption preloadDBRecentData already relies on.
+func (s *GitLabLogStreamer) evictOldDedupEntries() {
+	cutoff := time.Now().AddDate(0, 0, -PreloadEventsPeriodDays)
+
+	s.latestAuditLogEvents.Range(func(key string, event AuditEvent) bool {
+		if event.Time.Before(cutoff) {
+			s.latestAuditLogEvents.Delete(key)
+		}
+		return true
+	})
+
+	s.latestAuthEvents.Range(func(key string, event AuthEvent) bool {
+		if event.Time.Before(cutoff) {
+			s.latestAuthEvents.Delete(key)
+		}
+		return true
+	})
 }

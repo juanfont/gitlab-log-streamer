@@ -100,12 +100,37 @@ func TestAuditEventToSyslogMessage(t *testing.T) {
 	if !strings.HasPrefix(str, "<110>1 ") {
 		t.Errorf("message %q does not start with expected priority header", str)
 	}
-	// Note: the msg ID ("User logged in") is dropped by the rfc5424 library
-	// because MSGID must not contain spaces; only the free-form message
-	// survives.
-	for _, want := range []string{"gitlab.example.com", "gitlab", "AuthorName=\"juan\"", "User juan logged in"} {
+	// The msg ID is sanitized to a space-free RFC5424 MSGID ("User-logged-in")
+	// so it now survives serialization, alongside the free-form message.
+	for _, want := range []string{"gitlab.example.com", "gitlab", "User-logged-in", "AuthorName=\"juan\"", "User juan logged in"} {
 		if !strings.Contains(str, want) {
 			t.Errorf("message %q does not contain %q", str, want)
+		}
+	}
+}
+
+func TestToSyslogMsgID(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"User logged in", "User-logged-in"},
+		{"User logged in with OpenID Connect", "User-logged-in-with-OpenID-Conne"}, // truncated to 32
+		{"", "-"},
+		{"already-valid", "already-valid"},
+		{"weird\tchars\nhere", "weirdcharshere"},
+	}
+
+	for _, tt := range tests {
+		got := toSyslogMsgID(tt.in)
+		if got != tt.want {
+			t.Errorf("toSyslogMsgID(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+		if len(got) > 32 {
+			t.Errorf("toSyslogMsgID(%q) length %d exceeds 32", tt.in, len(got))
+		}
+		if strings.ContainsAny(got, " \t\n") {
+			t.Errorf("toSyslogMsgID(%q) = %q contains whitespace", tt.in, got)
 		}
 	}
 }

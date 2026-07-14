@@ -1,6 +1,9 @@
 package leef
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 type LEEFMessage struct {
 	SyslogHeader    SyslogRFC5424Header
@@ -31,7 +34,7 @@ func (m LEEFMessage) String() string {
 	for k, v := range m.EventAttributes {
 		eventAttributes += fmt.Sprintf("%s=%s^", k, v)
 	}
-	eventAttributes = eventAttributes[:len(eventAttributes)-1]
+	eventAttributes = strings.TrimSuffix(eventAttributes, "^")
 
 	return fmt.Sprintf("%s LEEF:%s|%s|%s|%s|%s|%s|%s",
 		m.SyslogHeader,

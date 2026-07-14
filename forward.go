@@ -28,11 +28,20 @@ func (s *GitLabLogStreamer) forwardNewAuditLogEventsHTTP(auditEvents []*AuditEve
 			continue
 		}
 
-		_, err = client.Post(s.cfg.AuditLogForwardingEndpoint,
+		resp, err := client.Post(s.cfg.AuditLogForwardingEndpoint,
 			"application/json",
 			bytes.NewReader(data),
 		)
 		if err != nil {
+			log.Warn().Err(err).Str("endpoint", s.cfg.AuditLogForwardingEndpoint).
+				Msg("Failed to POST audit event to HTTP endpoint")
+			continue
+		}
+		resp.Body.Close()
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			log.Warn().Int("status", resp.StatusCode).
+				Msg("HTTP endpoint returned non-2xx for audit event")
 			continue
 		}
 
@@ -55,11 +64,20 @@ func (s *GitLabLogStreamer) forwardNewAuthEventsHTTP(authEvents []*AuthEvent) er
 			continue
 		}
 
-		_, err = client.Post(s.cfg.AuthLogForwardingEndpoint,
+		resp, err := client.Post(s.cfg.AuthLogForwardingEndpoint,
 			"application/json",
 			bytes.NewReader(data),
 		)
 		if err != nil {
+			log.Warn().Err(err).Str("endpoint", s.cfg.AuthLogForwardingEndpoint).
+				Msg("Failed to POST auth event to HTTP endpoint")
+			continue
+		}
+		resp.Body.Close()
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			log.Warn().Int("status", resp.StatusCode).
+				Msg("HTTP endpoint returned non-2xx for auth event")
 			continue
 		}
 
@@ -202,7 +220,7 @@ func (s *GitLabLogStreamer) auditEventToSyslogMessage(auditEvent *AuditEvent) rf
 	}
 
 	messageID, message := getAuditEventMessageType(auditEvent)
-	msg.SetMsgID(messageID)
+	msg.SetMsgID(toSyslogMsgID(messageID))
 	msg.SetMessage(message)
 
 	return msg
@@ -228,10 +246,37 @@ func (s *GitLabLogStreamer) authEventToSyslogMessage(authEvent *AuthEvent) rfc54
 	}
 
 	messageID := getAuthEventMessageType(authEvent)
-	msg.SetMsgID(messageID)
+	msg.SetMsgID(toSyslogMsgID(messageID))
 	msg.SetMessage(messageID)
 
 	return msg
+}
+
+// toSyslogMsgID turns a human-readable event type into a valid RFC5424 MSGID:
+// PRINTUSASCII with no spaces, at most 32 characters. Without this the
+// go-syslog library silently drops the MSGID (e.g. "User logged in").
+func toSyslogMsgID(id string) string {
+	var b strings.Builder
+	for _, r := range id {
+		switch {
+		case r == ' ':
+			b.WriteByte('-')
+		case r > 32 && r < 127:
+			b.WriteRune(r)
+		default:
+			// drop non-printable / non-ASCII characters
+		}
+	}
+
+	msgID := b.String()
+	if len(msgID) > 32 {
+		msgID = msgID[:32]
+	}
+	if msgID == "" {
+		return "-"
+	}
+
+	return msgID
 }
 
 func auditEventFieldsToMap(auditEvent *AuditEvent) map[string]string {

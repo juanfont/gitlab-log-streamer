@@ -19,6 +19,30 @@ func TestSyslogRFC5424HeaderString(t *testing.T) {
 	}
 }
 
+func TestLEEFMessageStringEmptyAttributes(t *testing.T) {
+	msg := LEEFMessage{
+		SyslogHeader: SyslogRFC5424Header{
+			Priority:  110,
+			Timestamp: "2024-04-16T10:00:00Z",
+			Hostname:  "gitlab.example.com",
+		},
+		LEEFVersion:     "2.0",
+		Vendor:          "GitLab Inc.",
+		Product:         "GitLab",
+		Version:         "16.9.1",
+		EventID:         "test",
+		Separator:       "^",
+		EventAttributes: map[string]string{},
+	}
+
+	// Must not panic on empty attributes (previously sliced out of range).
+	got := msg.String()
+	want := "<110>1 2024-04-16T10:00:00Z gitlab.example.com LEEF:2.0|GitLab Inc.|GitLab|16.9.1|test|^|"
+	if got != want {
+		t.Errorf("LEEF message with empty attributes = %q, want %q", got, want)
+	}
+}
+
 func TestLEEFMessageString(t *testing.T) {
 	msg := LEEFMessage{
 		SyslogHeader: SyslogRFC5424Header{

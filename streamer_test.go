@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/puzpuzpuz/xsync/v3"
 )
@@ -106,6 +107,35 @@ func TestProcessNewAuditLogEventsSameCorrelationIDDifferentTime(t *testing.T) {
 	}
 	if len(newEvents) != 2 {
 		t.Fatalf("expected 2 new events (dedup key includes nanos), got %d", len(newEvents))
+	}
+}
+
+func TestEvictOldDedupEntries(t *testing.T) {
+	s := newTestStreamer(t, "", "")
+
+	recent := AuditEvent{CorrelationID: "recent", Time: time.Now()}
+	old := AuditEvent{CorrelationID: "old", Time: time.Now().AddDate(0, 0, -PreloadEventsPeriodDays-1)}
+	s.latestAuditLogEvents.Store("recent", recent)
+	s.latestAuditLogEvents.Store("old", old)
+
+	recentAuth := AuthEvent{CorrelationID: "recent", Time: time.Now()}
+	oldAuth := AuthEvent{CorrelationID: "old", Time: time.Now().AddDate(0, 0, -PreloadEventsPeriodDays-1)}
+	s.latestAuthEvents.Store("recent", recentAuth)
+	s.latestAuthEvents.Store("old", oldAuth)
+
+	s.evictOldDedupEntries()
+
+	if _, ok := s.latestAuditLogEvents.Load("old"); ok {
+		t.Error("old audit event should have been evicted from the dedup map")
+	}
+	if _, ok := s.latestAuditLogEvents.Load("recent"); !ok {
+		t.Error("recent audit event should have been kept in the dedup map")
+	}
+	if _, ok := s.latestAuthEvents.Load("old"); ok {
+		t.Error("old auth event should have been evicted from the dedup map")
+	}
+	if _, ok := s.latestAuthEvents.Load("recent"); !ok {
+		t.Error("recent auth event should have been kept in the dedup map")
 	}
 }
 
