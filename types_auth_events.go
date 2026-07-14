@@ -23,8 +23,7 @@ type AuthEvent struct {
 	MetaClientID         *string `json:"meta.client_id,omitempty"`
 	ScopeType            *string `json:"scope_type,omitempty"`
 	RequestedProjectPath *string `json:"requested_project_path,omitempty"`
-	// RequestedActions     []string `json:"requested_actions,omitempty"`
-	// AuthorizedActions    []string `json:"authorized_actions,omitempty"`
+
 	HTTPUser            *string `json:"http_user,omitempty"`
 	AuthService         *string `json:"auth_service,omitempty"`
 	AuthResultType      *string `json:"auth_result.type"`

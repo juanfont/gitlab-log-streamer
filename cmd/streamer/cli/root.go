@@ -58,10 +58,10 @@ func initConfig() {
 }
 
 var rootCmd = &cobra.Command{
-	Use:   "streamer",
-	Short: "streamer is a tool to stream Gitlab audit logs to a HTTP endpoint",
+	Use:   "gitlab-log-streamer",
+	Short: "gitlab-log-streamer streams Gitlab audit and auth logs to HTTP and syslog destinations",
 	Long: `
-headscale is a tool to stream Gitlab audit logs to a HTTP endpoint
+gitlab-log-streamer streams Gitlab audit and auth logs to HTTP and syslog destinations
 
 https://github.com/juanfont/gitlab-log-streamer`,
 }

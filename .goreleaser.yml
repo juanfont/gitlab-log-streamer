@@ -1,5 +1,4 @@
-# This is an example .goreleaser.yml file with some sane defaults.
-# Make sure to check the documentation at http://goreleaser.com
+# Documentation at https://goreleaser.com
 version: 2
 before:
   hooks:
@@ -19,16 +18,15 @@ builds:
 
 archives:
   - id: golang-cross
-    builds:
+    ids:
       - linux-amd64
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    format: binary
-    # wrap_in_directory: true
+    formats: [binary]
 
 checksum:
   name_template: "checksums.txt"
 snapshot:
-  name_template: "{{ .Tag }}-next"
+  version_template: "{{ .Tag }}-next"
 changelog:
   sort: asc
   filters:

@@ -21,7 +21,6 @@ func (s *GitLabLogStreamer) readAuthLogFile() error {
 
 	for _, line := range lines {
 		if line == "" {
-			log.Warn().Msg("Empty line in auth log")
 			continue
 		}
 

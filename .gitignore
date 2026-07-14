@@ -22,6 +22,10 @@
 
 
 
+# goreleaser output
+/dist/
+
 # Internal stuff
 /compile_and_deploy.sh
 /Makefile
+/TODO.md

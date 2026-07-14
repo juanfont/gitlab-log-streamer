@@ -32,9 +32,7 @@ type AuditEvent struct {
 	EntityPath    string      `json:"entity_path"`
 	Remove        *Add        `json:"remove,omitempty"`
 	Add           *Add        `json:"add,omitempty"`
-	// Details       *Details    `json:"details,omitempty"`
-	// PushAccessLevels          []MergeAccessLevelElement `json:"push_access_levels,omitempty"`
-	// MergeAccessLevels         []MergeAccessLevelElement `json:"merge_access_levels,omitempty"`
+
 	AllowForcePush            *bool        `json:"allow_force_push,omitempty"`
 	CodeOwnerApprovalRequired *bool        `json:"code_owner_approval_required,omitempty"`
 	AuthorClass               *AuthorClass `json:"author_class,omitempty"`
@@ -57,26 +55,6 @@ type AuditEvent struct {
 
 	OriginalData datatypes.JSON
 }
-
-// type Details struct {
-// 	// PushAccessLevels          []MergeAccessLevelElement `json:"push_access_levels,omitempty"`
-// 	// MergeAccessLevels         []MergeAccessLevelElement `json:"merge_access_levels,omitempty"`
-// 	AllowForcePush            *bool       `json:"allow_force_push,omitempty"`
-// 	CodeOwnerApprovalRequired *bool       `json:"code_owner_approval_required,omitempty"`
-// 	AuthorName                string      `json:"author_name"`
-// 	AuthorClass               AuthorClass `json:"author_class"`
-// 	TargetID                  int64       `json:"target_id"`
-// 	TargetType                AuthorClass `json:"target_type"`
-// 	TargetDetails             string      `json:"target_details"`
-// 	CustomMessage             string      `json:"custom_message"`
-// 	IPAddress                 string      `json:"ip_address"`
-// 	EntityPath                string      `json:"entity_path"`
-// 	Change                    *Change     `json:"change,omitempty"`
-// 	From                      *string     `json:"from,omitempty"`
-// 	To                        *string     `json:"to,omitempty"`
-// 	Action                    *string     `json:"action,omitempty"`
-// 	Add                       *Add        `json:"add,omitempty"`
-// }
 
 type Add string
 
