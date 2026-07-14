@@ -195,7 +195,12 @@ func auditEventToProjectMessageType(auditEvent *AuditEvent) (string, string) {
 			*auditEvent.TargetDetails)
 	}
 
-	return "Project event - unknown", fmt.Sprintf("User %s %s %s", auditEvent.AuthorName, auditEvent.Action, auditEvent.EntityPath)
+	action := "unknown action"
+	if auditEvent.Action != nil {
+		action = *auditEvent.Action
+	}
+
+	return "Project event - unknown", fmt.Sprintf("User %s %s %s", auditEvent.AuthorName, action, auditEvent.EntityPath)
 }
 
 func auditEventToGroupMessageType(auditEvent *AuditEvent) (string, string) {
@@ -239,5 +244,10 @@ func auditEventToGroupMessageType(auditEvent *AuditEvent) (string, string) {
 				*auditEvent.CustomMessage)
 	}
 
-	return "Group event - unknown", fmt.Sprintf("User %s %s %s", auditEvent.AuthorName, auditEvent.Action, auditEvent.EntityPath)
+	action := "unknown action"
+	if auditEvent.Action != nil {
+		action = *auditEvent.Action
+	}
+
+	return "Group event - unknown", fmt.Sprintf("User %s %s %s", auditEvent.AuthorName, action, auditEvent.EntityPath)
 }
