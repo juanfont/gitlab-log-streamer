@@ -12,9 +12,10 @@ destinations:
   http:
     audit_log_url: "http://localhost:8080/foo"
     auth_log_url: "http://localhost:8080/foobar"
+    # Optional headers added to every forwarded request.
+    # Content-Type defaults to application/json and can be overridden here.
     headers:
       Authorization: "Bearer 1234567890"
-      Content-Type: "application/json"
   syslog:
     server_addr: "localhost:1489"
     protocol: "udp"

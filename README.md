@@ -49,6 +49,12 @@ destinations:
     audit_log_url: "https://example.com/audit-hook"
     auth_log_url: "https://example.com/auth-hook"
 
+    # Optional headers added to every forwarded request, e.g. to
+    # authenticate against the endpoint. Content-Type defaults to
+    # application/json and can be overridden here.
+    headers:
+      Authorization: "Bearer 1234567890"
+
   # Optional syslog forwarding
   syslog:
     server_addr: "localhost:1489"

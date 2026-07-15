@@ -30,6 +30,10 @@ type Config struct {
 	AuthLogPath                string
 	DBpath                     string
 
+	// HTTPHeaders are added to every forwarded HTTP request (e.g. an
+	// Authorization header). They override the default Content-Type.
+	HTTPHeaders map[string]string
+
 	SyslogServerAddr string
 	SyslogProtocol   string
 	UseLEEF          bool // Use QRadar propietary LEEF format

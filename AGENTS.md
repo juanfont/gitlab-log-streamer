@@ -81,7 +81,8 @@ and `.goreleaser.yml`).
 - `TODO.md` (if present) is intentionally uncommitted scratch — leave it out
   of commits.
 - `dist/` is goreleaser output and must not be committed.
-- The configured `destinations.http.headers` in the config file are currently
-  **not** applied by `forward.go` (known gap, see TODO).
+- Viper lowercases config map keys, so `destinations.http.headers` reaches
+  `Config.HTTPHeaders` lowercased (`authorization`, not `Authorization`).
+  This is harmless because `http.Header.Set` canonicalizes header names.
 - `pkg/leef` builds attribute strings from a map, so attribute order is
   non-deterministic — tests must parse, not compare exact strings.

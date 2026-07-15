@@ -18,6 +18,7 @@ func getStreamerConfig() (streamer.Config, error) {
 		AuditLogPath:               viper.GetString("sources.audit_log_path"),
 		AuthLogPath:                viper.GetString("sources.auth_log_path"),
 		DBpath:                     viper.GetString("db_path"),
+		HTTPHeaders:                viper.GetStringMapString("destinations.http.headers"),
 		SyslogServerAddr:           viper.GetString("destinations.syslog.server_addr"),
 		SyslogProtocol:             viper.GetString("destinations.syslog.protocol"),
 		UseLEEF:                    viper.GetBool("destinations.syslog.use_leef"),

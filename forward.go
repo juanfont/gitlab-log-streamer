@@ -16,6 +16,33 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+// postEventJSON POSTs data to url, applying the headers configured in
+// destinations.http.headers. Content-Type defaults to application/json, but
+// the configured headers take precedence so it can be overridden.
+func (s *GitLabLogStreamer) postEventJSON(client *http.Client, url string, data []byte) error {
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	for name, value := range s.cfg.HTTPHeaders {
+		req.Header.Set(name, value)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("endpoint returned status %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
 func (s *GitLabLogStreamer) forwardNewAuditLogEventsHTTP(auditEvents []*AuditEvent) error {
 	client := &http.Client{
 		Timeout: 10 * time.Second,
@@ -28,25 +55,13 @@ func (s *GitLabLogStreamer) forwardNewAuditLogEventsHTTP(auditEvents []*AuditEve
 			continue
 		}
 
-		resp, err := client.Post(s.cfg.AuditLogForwardingEndpoint,
-			"application/json",
-			bytes.NewReader(data),
-		)
-		if err != nil {
+		if err := s.postEventJSON(client, s.cfg.AuditLogForwardingEndpoint, data); err != nil {
 			log.Warn().Err(err).Str("endpoint", s.cfg.AuditLogForwardingEndpoint).
-				Msg("Failed to POST audit event to HTTP endpoint")
-			continue
-		}
-		resp.Body.Close()
-
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			log.Warn().Int("status", resp.StatusCode).
-				Msg("HTTP endpoint returned non-2xx for audit event")
+				Msg("Failed to forward audit event to HTTP endpoint")
 			continue
 		}
 
 		log.Info().Msg("Audit event forwarded via HTTP")
-
 	}
 
 	return nil
@@ -57,32 +72,20 @@ func (s *GitLabLogStreamer) forwardNewAuthEventsHTTP(authEvents []*AuthEvent) er
 		Timeout: 10 * time.Second,
 	}
 
-	for _, auditEvent := range authEvents {
-		data, err := json.Marshal(auditEvent)
+	for _, authEvent := range authEvents {
+		data, err := json.Marshal(authEvent)
 		if err != nil {
 			log.Error().Err(err).Msg("Failed to marshal auth event")
 			continue
 		}
 
-		resp, err := client.Post(s.cfg.AuthLogForwardingEndpoint,
-			"application/json",
-			bytes.NewReader(data),
-		)
-		if err != nil {
+		if err := s.postEventJSON(client, s.cfg.AuthLogForwardingEndpoint, data); err != nil {
 			log.Warn().Err(err).Str("endpoint", s.cfg.AuthLogForwardingEndpoint).
-				Msg("Failed to POST auth event to HTTP endpoint")
-			continue
-		}
-		resp.Body.Close()
-
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			log.Warn().Int("status", resp.StatusCode).
-				Msg("HTTP endpoint returned non-2xx for auth event")
+				Msg("Failed to forward auth event to HTTP endpoint")
 			continue
 		}
 
 		log.Info().Msg("Auth event forwarded via HTTP")
-
 	}
 
 	return nil
