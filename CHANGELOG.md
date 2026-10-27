@@ -1,5 +1,32 @@
 # Changelog
 
+## v0.9.3 (2026-10-27)
+
+### Fixed
+
+- **Audit events sharing a correlation ID and timestamp are no longer
+  dropped.** GitLab can log several distinct audit events from one request
+  in the same millisecond. Only the first was stored and forwarded. The dedup key now also includes
+  a hash of the log line, stored in a new `dedup_hash` column, so only truly
+  identical lines count as duplicates. On upgrade, events already stored
+  are not re-forwarded, and events earlier versions dropped this way are
+  forwarded once, as long as they are still in the live log file.
+- Auth events are sent to `auth_log_url` whenever it is set. Previously
+  they were only forwarded when `audit_log_url` was also set.
+- Audit events without `target_details` no longer crash the streamer while
+  building the syslog/LEEF message.
+
+### Changed
+
+- `time` is now indexed on both tables, so the startup preload and the
+  hourly auth cleanup no longer scan the whole table.
+
+### Upgrading
+
+On first start the new column and the two indexes are created. On a large
+database, building the indexes takes a while and needs some extra disk
+space. The streamer only starts reading the logs once they are built.
+
 ## v0.9.2 (2026-10-27)
 
 Fixes the memory and CPU use that grew out of control with GitLab 19.4.

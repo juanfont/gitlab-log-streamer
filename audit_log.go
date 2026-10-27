@@ -80,7 +80,7 @@ func (s *GitLabLogStreamer) forwardNewAuditLogEvents(auditEvents []*AuditEvent) 
 // storeAuditEvent persists an audit event that has not been seen before and
 // marks it as seen. It reports whether the event was new.
 func (s *GitLabLogStreamer) storeAuditEvent(auditEvent *AuditEvent) (bool, error) {
-	if s.seenAuditEvents.seen(auditEvent.CorrelationID, auditEvent.Time) {
+	if s.seenAuditEvents.seen(auditEvent.CorrelationID, auditEvent.Time, uint64(auditEvent.DedupHash)) {
 		log.Debug().Msgf("Audit event with correlation ID %s at %s already exists. Skipping", auditEvent.CorrelationID, auditEvent.Time.Format(time.RFC3339))
 		return false, nil
 	}
@@ -91,7 +91,7 @@ func (s *GitLabLogStreamer) storeAuditEvent(auditEvent *AuditEvent) (bool, error
 		return false, err
 	}
 
-	s.seenAuditEvents.add(auditEvent.CorrelationID, auditEvent.Time)
+	s.seenAuditEvents.add(auditEvent.CorrelationID, auditEvent.Time, uint64(auditEvent.DedupHash))
 	auditLogEventsReceived.Inc()
 	log.Debug().Msgf("Inserted audit event with correlation ID %s", auditEvent.CorrelationID)
 
@@ -105,6 +105,7 @@ func (s *GitLabLogStreamer) parseAuditLogEvent(line string) (*AuditEvent, error)
 	if err != nil {
 		return nil, err
 	}
+	auditEvent.DedupHash = int64(lineHash([]byte(line)))
 
 	return auditEvent, nil
 }
@@ -191,7 +192,7 @@ func auditEventToProjectMessageType(auditEvent *AuditEvent) (string, string) {
 			auditEvent.AuthorName,
 			*auditEvent.Change,
 			auditEvent.EntityPath,
-			*auditEvent.TargetDetails)
+			stringOrEmpty(auditEvent.TargetDetails))
 	}
 
 	action := "unknown action"
@@ -210,7 +211,7 @@ func auditEventToGroupMessageType(auditEvent *AuditEvent) (string, string) {
 				auditEvent.EntityID,
 				*auditEvent.Add,
 				auditEvent.EntityPath,
-				*auditEvent.TargetDetails)
+				stringOrEmpty(auditEvent.TargetDetails))
 	}
 
 	if auditEvent.Remove != nil {
@@ -220,7 +221,7 @@ func auditEventToGroupMessageType(auditEvent *AuditEvent) (string, string) {
 				auditEvent.EntityID,
 				*auditEvent.Remove,
 				auditEvent.EntityPath,
-				*auditEvent.TargetDetails)
+				stringOrEmpty(auditEvent.TargetDetails))
 	}
 
 	if auditEvent.Change != nil {
@@ -230,7 +231,7 @@ func auditEventToGroupMessageType(auditEvent *AuditEvent) (string, string) {
 				auditEvent.EntityID,
 				*auditEvent.Change,
 				auditEvent.EntityPath,
-				*auditEvent.TargetDetails)
+				stringOrEmpty(auditEvent.TargetDetails))
 	}
 
 	if auditEvent.CustomMessage != nil {
@@ -249,4 +250,14 @@ func auditEventToGroupMessageType(auditEvent *AuditEvent) (string, string) {
 	}
 
 	return "Group event - unknown", fmt.Sprintf("User %s %s %s", auditEvent.AuthorName, action, auditEvent.EntityPath)
+}
+
+// stringOrEmpty dereferences an optional field such as target_details, which
+// GitLab omits from some audit events.
+func stringOrEmpty(s *string) string {
+	if s == nil {
+		return ""
+	}
+
+	return *s
 }

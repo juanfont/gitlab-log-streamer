@@ -142,3 +142,30 @@ func TestGetAuditEventMessageTypeUnknownEntity(t *testing.T) {
 		t.Errorf("message ID = %q, want %q", msgID, "unknown event")
 	}
 }
+
+// target_details is optional in GitLab's audit JSON. Building the message
+// must not dereference it blindly.
+func TestGetAuditEventMessageTypeWithoutTargetDetails(t *testing.T) {
+	add, remove := Add("user_access"), Add("user_access")
+	change := Change("access_level")
+
+	cases := []struct {
+		event  *AuditEvent
+		wantID string
+	}{
+		{&AuditEvent{EntityType: AuthorClassGroup, Add: &add}, "Group event - add"},
+		{&AuditEvent{EntityType: AuthorClassGroup, Remove: &remove}, "Group event - remove"},
+		{&AuditEvent{EntityType: AuthorClassGroup, Change: &change}, "Group event - change"},
+		{&AuditEvent{EntityType: AuthorClassProject, Change: &change}, "Project event - change"},
+	}
+
+	for _, c := range cases {
+		msgID, msg := getAuditEventMessageType(c.event)
+		if msgID != c.wantID {
+			t.Errorf("message ID = %q, want %q", msgID, c.wantID)
+		}
+		if strings.Contains(msg, "%!") || strings.Contains(msg, "<nil>") {
+			t.Errorf("%s: malformed message %q", c.wantID, msg)
+		}
+	}
+}

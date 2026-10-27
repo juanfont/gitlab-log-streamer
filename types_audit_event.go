@@ -19,7 +19,7 @@ type AuditEvent struct {
 	CorrelationID string `gorm:"type:varchar(64)" json:"correlation_id"`
 
 	Severity      string      `json:"severity"`
-	Time          time.Time   `json:"time"`
+	Time          time.Time   `gorm:"index" json:"time"`
 	AuthorID      int64       `json:"author_id"`
 	AuthorName    string      `json:"author_name"`
 	EntityID      int64       `json:"entity_id"`
@@ -54,6 +54,10 @@ type AuditEvent struct {
 	MetaUserID          int    `json:"meta.user_id,omitempty"`
 
 	OriginalData datatypes.JSON
+
+	// DedupHash is lineHash of the raw log line, stored for deduplication
+	// across restarts. It is not forwarded.
+	DedupHash int64 `json:"-" forward:"-"`
 }
 
 type Add string

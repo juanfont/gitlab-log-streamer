@@ -268,8 +268,10 @@ With TCP this means newline-delimited framing.
   `copytruncate`) is also followed. Lines GitLab writes between logrotate's
   copy and truncate only exist in the rotated file and are not forwarded.
   This is inherent to `copytruncate`.
-- **Deduplication.** An event is identified by its correlation ID plus its
-  timestamp, because GitLab reuses correlation IDs. On startup the streamer
+- **Deduplication.** An event is identified by its correlation ID, its
+  timestamp and a hash of its log line. GitLab reuses correlation IDs, and
+  one request can log several events in the same millisecond. An identical
+  line is still a duplicate. On startup the streamer
   reads both files from the beginning. Events stored within the last
   `dedup_window` are skipped, so nothing is forwarded twice across a restart.
   This only works if the live log files hold nothing older than the window.

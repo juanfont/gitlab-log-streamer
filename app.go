@@ -1,6 +1,7 @@
 package streamer
 
 import (
+	"database/sql"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -156,8 +157,10 @@ func (s *GitLabLogStreamer) preloadDBRecentData() error {
 
 // preloadDedupSet adds the events matched by query that are newer than cutoff
 // to set. Only the dedup key columns are read, so no full events are loaded.
+// Rows stored before line hashes existed have a NULL or 0 dedup_hash and are
+// added as legacy entries (see dedupSet.seen).
 func preloadDedupSet(query *gorm.DB, cutoff time.Time, set *dedupSet) error {
-	rows, err := query.Select("correlation_id", "time").Where("time > ?", cutoff).Rows()
+	rows, err := query.Select("correlation_id", "time", "dedup_hash").Where("time > ?", cutoff).Rows()
 	if err != nil {
 		return err
 	}
@@ -166,10 +169,11 @@ func preloadDedupSet(query *gorm.DB, cutoff time.Time, set *dedupSet) error {
 	for rows.Next() {
 		var correlationID string
 		var eventTime time.Time
-		if err := rows.Scan(&correlationID, &eventTime); err != nil {
+		var hash sql.NullInt64
+		if err := rows.Scan(&correlationID, &eventTime, &hash); err != nil {
 			return err
 		}
-		set.add(correlationID, eventTime)
+		set.add(correlationID, eventTime, uint64(hash.Int64))
 	}
 
 	return rows.Err()

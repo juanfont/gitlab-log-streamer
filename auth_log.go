@@ -61,10 +61,10 @@ func (s *GitLabLogStreamer) forwardNewAuthEvents(authEvents []*AuthEvent) {
 		return
 	}
 
-	if s.cfg.AuditLogForwardingEndpoint != "" {
+	if s.cfg.AuthLogForwardingEndpoint != "" {
 		log.Debug().
 			Int("events", len(authEvents)).
-			Str("endpoint", s.cfg.AuditLogForwardingEndpoint).
+			Str("endpoint", s.cfg.AuthLogForwardingEndpoint).
 			Msgf("Forwarding auth events to HTTP endpoint")
 		err := s.forwardNewAuthEventsHTTP(authEvents)
 		if err != nil {
@@ -87,7 +87,7 @@ func (s *GitLabLogStreamer) forwardNewAuthEvents(authEvents []*AuthEvent) {
 // storeAuthEvent persists an auth event that has not been seen before and
 // marks it as seen. It reports whether the event was new.
 func (s *GitLabLogStreamer) storeAuthEvent(authEvent *AuthEvent) (bool, error) {
-	if s.seenAuthEvents.seen(authEvent.CorrelationID, authEvent.Time) {
+	if s.seenAuthEvents.seen(authEvent.CorrelationID, authEvent.Time, uint64(authEvent.DedupHash)) {
 		log.Debug().Msgf("Auth event with correlation ID %s at %s already exists. Skipping", authEvent.CorrelationID, authEvent.Time.Format(time.RFC3339))
 		return false, nil
 	}
@@ -98,7 +98,7 @@ func (s *GitLabLogStreamer) storeAuthEvent(authEvent *AuthEvent) (bool, error) {
 		return false, err
 	}
 
-	s.seenAuthEvents.add(authEvent.CorrelationID, authEvent.Time)
+	s.seenAuthEvents.add(authEvent.CorrelationID, authEvent.Time, uint64(authEvent.DedupHash))
 	authLogEventsReceived.Inc()
 	log.Debug().Msgf("Inserted auth event with correlation ID %s", authEvent.CorrelationID)
 
@@ -111,6 +111,7 @@ func (s *GitLabLogStreamer) parseAuthEvent(line string) (*AuthEvent, error) {
 	if err != nil {
 		return nil, err
 	}
+	authEvent.DedupHash = int64(lineHash([]byte(line)))
 
 	return authEvent, nil
 }

@@ -10,7 +10,7 @@ type AuthEvent struct {
 	ID            uint64    `gorm:"primary_key" json:"-"`
 	CorrelationID string    `gorm:"type:varchar(64)" json:"correlation_id"`
 	Severity      string    `json:"severity"`
-	Time          time.Time `json:"time"`
+	Time          time.Time `gorm:"index" json:"time"`
 
 	Message              *string `json:"message,omitempty"`
 	Env                  *string `json:"env,omitempty"`
@@ -31,4 +31,8 @@ type AuthEvent struct {
 	PayloadType         *string `json:"payload_type,omitempty"`
 
 	OriginalData datatypes.JSON
+
+	// DedupHash is lineHash of the raw log line, stored for deduplication
+	// across restarts. It is not forwarded.
+	DedupHash int64 `json:"-" forward:"-"`
 }

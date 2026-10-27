@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -239,7 +240,8 @@ func TestPreloadUsesConfiguredDedupWindow(t *testing.T) {
 	if fresh.seenAuthEvents.size() != 1 {
 		t.Fatalf("expected 1 preloaded auth event inside a 2h window, got %d", fresh.seenAuthEvents.size())
 	}
-	if !fresh.seenAuthEvents.seen("inside", mustParseAuthLine(t, s, "inside").Time) {
+	inside := mustParseAuthLine(t, s, "inside")
+	if !fresh.seenAuthEvents.seen(inside.CorrelationID, inside.Time, uint64(inside.DedupHash)) {
 		t.Error("event inside the window should have been preloaded")
 	}
 }
@@ -268,17 +270,17 @@ func TestEvictOldDedupEntriesUsesDedupWindow(t *testing.T) {
 	s.cfg.DedupWindow = 2 * time.Hour
 	now := time.Now()
 
-	s.seenAuditEvents.add("recent", now.Add(-time.Hour))
-	s.seenAuditEvents.add("old", now.Add(-3*time.Hour))
-	s.seenAuthEvents.add("recent", now.Add(-time.Hour))
-	s.seenAuthEvents.add("old", now.Add(-3*time.Hour))
+	s.seenAuditEvents.add("recent", now.Add(-time.Hour), 1)
+	s.seenAuditEvents.add("old", now.Add(-3*time.Hour), 1)
+	s.seenAuthEvents.add("recent", now.Add(-time.Hour), 1)
+	s.seenAuthEvents.add("old", now.Add(-3*time.Hour), 1)
 
 	s.evictOldDedupEntries()
 
-	if s.seenAuditEvents.seen("old", now.Add(-3*time.Hour)) || s.seenAuthEvents.seen("old", now.Add(-3*time.Hour)) {
+	if s.seenAuditEvents.seen("old", now.Add(-3*time.Hour), 1) || s.seenAuthEvents.seen("old", now.Add(-3*time.Hour), 1) {
 		t.Error("entries older than the dedup window should have been evicted")
 	}
-	if !s.seenAuditEvents.seen("recent", now.Add(-time.Hour)) || !s.seenAuthEvents.seen("recent", now.Add(-time.Hour)) {
+	if !s.seenAuditEvents.seen("recent", now.Add(-time.Hour), 1) || !s.seenAuthEvents.seen("recent", now.Add(-time.Hour), 1) {
 		t.Error("entries inside the dedup window should have been kept")
 	}
 }
@@ -348,5 +350,113 @@ func TestPreloadDBRecentData(t *testing.T) {
 	}
 	if fresh.seenAuthEvents.size() != 0 {
 		t.Errorf("expected no preloaded auth events, got %d", fresh.seenAuthEvents.size())
+	}
+}
+
+func TestAuthEventsForwardedWithOnlyAuthEndpointSet(t *testing.T) {
+	s := newTestStreamer(t, "", authLine("A", time.Now(), "Successful login")+"\n")
+	srv, _, bodies := captureForwardTarget(t, http.StatusOK)
+	s.cfg.AuthLogForwardingEndpoint = srv.URL // audit_log_url deliberately unset
+
+	if err := s.readAuthLogFile(); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(*bodies) != 1 {
+		t.Fatalf("expected the auth event to reach auth_log_url, got %d requests", len(*bodies))
+	}
+}
+
+func auditLineWithMessage(correlationID string, ts time.Time, message string) string {
+	return fmt.Sprintf(`{"severity":"INFO","time":%q,"correlation_id":%q,"author_id":1,"author_name":"juan","entity_id":1,"entity_type":"Project","entity_path":"group/repo","custom_message":%q}`,
+		ts.UTC().Format("2006-01-02T15:04:05.000Z"), correlationID, message)
+}
+
+// GitLab logs several audit events from one request with the same
+// correlation ID and millisecond timestamp. They are distinct events.
+func TestAuditEventsSharingCorrelationIDAndTimeAreAllForwarded(t *testing.T) {
+	ts := time.Now().Add(-time.Minute)
+	s := newTestStreamer(t,
+		auditLineWithMessage("req-1", ts, "Changed setting A")+"\n"+
+			auditLineWithMessage("req-1", ts, "Changed setting B")+"\n"+
+			auditLineWithMessage("req-1", ts, "Changed setting C")+"\n", "")
+	bodies := forwardAllTo(t, s)
+
+	if err := s.readAuditLogFile(); err != nil {
+		t.Fatal(err)
+	}
+	if len(*bodies) != 3 {
+		t.Fatalf("expected all 3 events forwarded, got %d", len(*bodies))
+	}
+	if count := countRows(t, s, &AuditEvent{}); count != 3 {
+		t.Fatalf("expected 3 audit rows, got %d", count)
+	}
+
+	// And none of them is re-forwarded after a restart.
+	fresh := restartTestStreamer(t, s)
+	freshBodies := forwardAllTo(t, fresh)
+	if err := fresh.readAuditLogFile(); err != nil {
+		t.Fatal(err)
+	}
+	if len(*freshBodies) != 0 {
+		t.Fatalf("expected nothing re-forwarded after restart, got %d", len(*freshBodies))
+	}
+}
+
+func TestIdenticalAuditLinesAreDeduplicated(t *testing.T) {
+	line := auditLineWithMessage("req-1", time.Now(), "Changed setting A")
+	s := newTestStreamer(t, line+"\n"+line+"\n", "")
+
+	if err := s.readAuditLogFile(); err != nil {
+		t.Fatal(err)
+	}
+	if count := countRows(t, s, &AuditEvent{}); count != 1 {
+		t.Fatalf("an identical line must be stored once, got %d rows", count)
+	}
+}
+
+// Rows stored by 0.9.2 and older have no line hash. Upgrading must not
+// re-forward them, but events that were wrongly dropped as duplicates of
+// them must now go out (once).
+func TestUpgradeFromRowsWithoutLineHash(t *testing.T) {
+	ts := time.Now().Add(-time.Minute)
+	first := auditLineWithMessage("req-1", ts, "Changed setting A")
+	second := auditLineWithMessage("req-1", ts, "Changed setting B")
+	s := newTestStreamer(t, first+"\n"+second+"\n", "")
+
+	// What 0.9.2 left in the DB: only the first event, without a hash.
+	legacy, err := s.parseAuditLogEvent(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.Create(legacy).Error; err != nil {
+		t.Fatal(err)
+	}
+	// AutoMigrate adds dedup_hash to an existing table as NULL.
+	if err := s.db.Exec("UPDATE audit_events SET dedup_hash = NULL").Error; err != nil {
+		t.Fatal(err)
+	}
+
+	upgraded := restartTestStreamer(t, s)
+	bodies := forwardAllTo(t, upgraded)
+	if err := upgraded.readAuditLogFile(); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(*bodies) != 1 || !strings.Contains(string((*bodies)[0]), "Changed setting B") {
+		t.Fatalf("expected only the previously dropped event to be forwarded, got %d: %q", len(*bodies), *bodies)
+	}
+	if count := countRows(t, upgraded, &AuditEvent{}); count != 2 {
+		t.Fatalf("expected 2 audit rows after upgrade, got %d", count)
+	}
+
+	// A second restart still forwards nothing.
+	again := restartTestStreamer(t, upgraded)
+	againBodies := forwardAllTo(t, again)
+	if err := again.readAuditLogFile(); err != nil {
+		t.Fatal(err)
+	}
+	if len(*againBodies) != 0 {
+		t.Fatalf("expected nothing forwarded after a second restart, got %d", len(*againBodies))
 	}
 }

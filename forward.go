@@ -286,8 +286,9 @@ func auditEventFieldsToMap(auditEvent *AuditEvent) map[string]string {
 	fieldMap := map[string]string{}
 	reflectValue := reflect.ValueOf(*auditEvent)
 	for i := 0; i < reflectValue.NumField(); i++ {
-		fieldName := reflectValue.Type().Field(i).Name
-		if fieldName == "" {
+		field := reflectValue.Type().Field(i)
+		fieldName := field.Name
+		if fieldName == "" || field.Tag.Get("forward") == "-" {
 			continue
 		}
 
@@ -311,8 +312,9 @@ func authEventFieldsToMap(authEvent *AuthEvent) map[string]string {
 	fieldMap := map[string]string{}
 	reflectValue := reflect.ValueOf(*authEvent)
 	for i := 0; i < reflectValue.NumField(); i++ {
-		fieldName := reflectValue.Type().Field(i).Name
-		if fieldName == "" {
+		field := reflectValue.Type().Field(i)
+		fieldName := field.Name
+		if fieldName == "" || field.Tag.Get("forward") == "-" {
 			continue
 		}
 

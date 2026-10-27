@@ -347,3 +347,26 @@ func TestAuditEventToLEEF(t *testing.T) {
 		t.Errorf("LEEF message %q missing AuthorName attribute", str)
 	}
 }
+
+// The dedup hash is internal bookkeeping: it must not change the wire format.
+func TestDedupHashIsNotForwarded(t *testing.T) {
+	audit := &AuditEvent{CorrelationID: "abc", DedupHash: 42}
+	auth := &AuthEvent{CorrelationID: "xyz", DedupHash: 42}
+
+	if _, ok := auditEventFieldsToMap(audit)["DedupHash"]; ok {
+		t.Error("DedupHash must not be in audit syslog/LEEF fields")
+	}
+	if _, ok := authEventFieldsToMap(auth)["DedupHash"]; ok {
+		t.Error("DedupHash must not be in auth syslog/LEEF fields")
+	}
+
+	for _, v := range []any{audit, auth} {
+		data, err := json.Marshal(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(strings.ToLower(string(data)), "dedup") {
+			t.Errorf("DedupHash must not be in the HTTP JSON payload: %s", data)
+		}
+	}
+}

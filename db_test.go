@@ -68,3 +68,15 @@ func TestOpenDBSwitchesExistingDBToWAL(t *testing.T) {
 		t.Errorf("expected the existing row to survive the switch, got %d rows", count)
 	}
 }
+
+// The startup preload and the hourly auth cleanup filter on time.
+func TestOpenDBIndexesTime(t *testing.T) {
+	s := newTestStreamer(t, "", "")
+
+	if !s.db.Migrator().HasIndex(&AuditEvent{}, "Time") {
+		t.Error("audit_events.time is not indexed")
+	}
+	if !s.db.Migrator().HasIndex(&AuthEvent{}, "Time") {
+		t.Error("auth_events.time is not indexed")
+	}
+}

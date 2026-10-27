@@ -98,12 +98,24 @@ read<Kind>LogFile:
   log, so `handleFileEvent` filters by cleaned path. Watcher errors (e.g.
   inotify queue overflow) and a 30 s poll trigger a read of both files as a
   safety net.
-- **Dedup** (`dedupSet`) stores only `{correlation_id, unix_nanos}` keys,
-  about 100 B each. Never store event data in it. The timestamp is part of
-  the key because GitLab reuses correlation IDs within a request. Preload
-  selects only those two columns. The window (`dedup_window`, default 48h)
-  must cover the oldest line in the live files. Dedup now only matters after
-  a restart or a truncation reset, since both re-read from 0.
+- **Dedup** (`dedupSet`) stores only `{correlation_id, unix_nanos,
+  line_hash}` keys, about 100 B each. Never store event data in it.
+  - The timestamp is in the key because GitLab reuses correlation IDs within
+    a request.
+  - The line hash (`lineHash`, FNV-1a of the raw line, stored in the
+    `dedup_hash` column) is in the key because one request can log several
+    distinct events with the same correlation ID and millisecond. A truly
+    identical line is still a duplicate. The hash must stay stable across
+    processes: never switch to a seeded hash like `maphash`.
+  - Rows stored by 0.9.2 and older have a NULL/0 `dedup_hash` and are
+    preloaded as legacy entries. The first event matching one on
+    correlation ID and time is taken to be that row (older versions read
+    in file order and dropped the rest). Later ones are new.
+    `TestUpgradeFromRowsWithoutLineHash` covers this.
+  - Preload selects only those three columns, using the index on `time`.
+    The window (`dedup_window`, default 48h) must cover the oldest line in
+    the live files. Dedup only matters after a restart or a truncation
+    reset, since both re-read from 0.
 - **First start forwards the whole backlog.** The startup read forwards every
   event in the log that isn't in the DB yet. This is documented in the README.
 - **SQLite**: the pure-Go driver needs `SetMaxOpenConns(1)`. Keep it.
@@ -154,10 +166,13 @@ read<Kind>LogFile:
   `author_name`). The HTTP payload uses the JSON tags.
 - Reflection also emits `ID` (DB primary key) and `OriginalData` (a
   `datatypes.JSON` column that is never populated today). Remember this
-  before changing what goes on the wire.
+  before changing what goes on the wire. Internal fields are tagged
+  `json:"-" forward:"-"` (e.g. `DedupHash`), which keeps them out of both the
+  HTTP payload and syslog/LEEF.
 - Message/event-ID synthesis: `getAuditEventMessageType` returns
   `(eventID, message)` based on `EntityType` (User/Project/Group) and on which
-  of `With/Add/Remove/Change/CustomMessage/Action` is set.
+  of `With/Add/Remove/Change/CustomMessage/Action` is set. Optional fields
+  such as `TargetDetails` go through `stringOrEmpty`, never a bare `*`.
   `getAuthEventMessageType` uses `Message`, then `MetaFeatureCategory`. The
   RFC 5424 MSGID must go through `toSyslogMsgID`, otherwise go-syslog
   silently drops it.
@@ -198,15 +213,6 @@ read<Kind>LogFile:
 
 ## Known issues (delete each entry when it's fixed)
 
-- `forwardNewAuthEvents` (`auth_log.go`) checks and logs
-  `AuditLogForwardingEndpoint` but posts to `AuthLogForwardingEndpoint`.
-- The group add/remove/change messages and the project "change" message
-  dereference `TargetDetails` without a nil check, so an event without
-  `target_details` panics.
-- The audit dedup key collides for distinct events in the same request and
-  millisecond. Only the first is stored and forwarded. GitLab's own `id` field
-  on audit lines is unique and would make a correct key. That isn't modelled
-  yet and needs a DB column plus a preload fallback for old rows.
 - `NewGitLabLogStreamer` checks only that the audit log exists, and
   `auth_log_path` isn't validated as required.
 - `getCurrentGitlabVersion` only recognises `gitlab-ee` manifests, so CE
