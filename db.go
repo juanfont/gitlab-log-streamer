@@ -24,8 +24,10 @@ func (s *GitLabLogStreamer) openDB() (*gorm.DB, error) {
 
 	gormLogger := logger.Default.LogMode(logger.Silent)
 
+	// The pure-Go driver only applies pragmas given as _pragma=name(value);
+	// mattn-style params like _journal_mode=WAL are silently ignored.
 	db, err = gorm.Open(
-		sqlite.Open(s.cfg.DBpath+"?_synchronous=1&_journal_mode=WAL"),
+		sqlite.Open(s.cfg.DBpath+"?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)"),
 		&gorm.Config{
 			DisableForeignKeyConstraintWhenMigrating: true,
 			Logger:                                   gormLogger,
