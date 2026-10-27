@@ -61,7 +61,7 @@ func (s *GitLabLogStreamer) forwardNewAuditLogEventsHTTP(auditEvents []*AuditEve
 			continue
 		}
 
-		log.Info().Msg("Audit event forwarded via HTTP")
+		log.Debug().Msg("Audit event forwarded via HTTP")
 	}
 
 	return nil
@@ -85,7 +85,7 @@ func (s *GitLabLogStreamer) forwardNewAuthEventsHTTP(authEvents []*AuthEvent) er
 			continue
 		}
 
-		log.Info().Msg("Auth event forwarded via HTTP")
+		log.Debug().Msg("Auth event forwarded via HTTP")
 	}
 
 	return nil
@@ -108,7 +108,7 @@ func (s *GitLabLogStreamer) forwardNewAuditLogEventsSyslog(auditEvents []*AuditE
 			str, _ = syslogMsg.String()
 		}
 
-		log.Info().Msg(str)
+		log.Debug().Msg(str)
 
 		_, err = conn.Write([]byte(str + "\n"))
 		if err != nil {
@@ -137,7 +137,7 @@ func (s *GitLabLogStreamer) forwardNewAuthEventsSyslog(authEvents []*AuthEvent) 
 			str, _ = syslogMsg.String()
 		}
 
-		log.Info().Msg(str)
+		log.Debug().Msg(str)
 
 		_, err = conn.Write([]byte(str + "\n"))
 		if err != nil {

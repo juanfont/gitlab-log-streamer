@@ -2,58 +2,67 @@ package streamer
 
 import (
 	"encoding/json"
-	"fmt"
-	"os"
-	"strings"
+	"slices"
 	"time"
 
 	"github.com/rs/zerolog/log"
 )
 
+// readAuthLogFile stores and forwards the auth events appended to the log
+// since the previous call.
 func (s *GitLabLogStreamer) readAuthLogFile() error {
-	content, err := os.ReadFile(s.cfg.AuthLogPath)
-	if err != nil {
-		return err
-	}
+	newEvents := []*AuthEvent{}
 
-	lines := strings.Split(string(content), "\n")
-	authEvents := []*AuthEvent{}
-
-	for _, line := range lines {
-		if line == "" {
-			continue
+	err := s.authTailer.readLines(func(line []byte) error {
+		if len(line) == 0 {
+			return nil
 		}
 
-		authEvent, err := s.parseAuthEvent(line)
+		authEvent, err := s.parseAuthEvent(string(line))
 		if err != nil {
 			log.Warn().Err(err).Msgf("Failed to parse auth log entry. Content: %s", line)
-			continue
+			return nil
 		}
 
-		authEvents = append(authEvents, authEvent)
-	}
+		if s.isDroppedAuthEvent(authEvent) {
+			authLogEventsDropped.Inc()
+			return nil
+		}
 
-	newEvents, err := s.processNewAuthEvents(authEvents)
-	if err != nil {
-		return err
-	}
+		isNew, err := s.storeAuthEvent(authEvent)
+		if err != nil || !isNew {
+			return err
+		}
 
-	if len(newEvents) == 0 {
-		log.Warn().
-			Msg("No new auth events to forward, but a full read was requested")
-	}
+		newEvents = append(newEvents, authEvent)
+		if len(newEvents) >= forwardBatchSize {
+			s.forwardNewAuthEvents(newEvents)
+			newEvents = []*AuthEvent{}
+		}
 
-	err = s.forwardNewAuthEvents(newEvents)
-	if err != nil {
-		return err
-	}
+		return nil
+	})
 
-	return nil
+	// Forward what was stored even if reading stopped on an error: those
+	// events are already marked as seen and would not be forwarded later.
+	s.forwardNewAuthEvents(newEvents)
+
+	return err
 }
 
-func (s *GitLabLogStreamer) forwardNewAuthEvents(authEvents []*AuthEvent) error {
+// isDroppedAuthEvent reports whether the event's message is listed in
+// filters.auth_log.drop_messages.
+func (s *GitLabLogStreamer) isDroppedAuthEvent(authEvent *AuthEvent) bool {
+	return authEvent.Message != nil && slices.Contains(s.cfg.AuthLogDropMessages, *authEvent.Message)
+}
+
+func (s *GitLabLogStreamer) forwardNewAuthEvents(authEvents []*AuthEvent) {
+	if len(authEvents) == 0 {
+		return
+	}
+
 	if s.cfg.AuditLogForwardingEndpoint != "" {
-		log.Info().
+		log.Debug().
 			Int("events", len(authEvents)).
 			Str("endpoint", s.cfg.AuditLogForwardingEndpoint).
 			Msgf("Forwarding auth events to HTTP endpoint")
@@ -73,41 +82,27 @@ func (s *GitLabLogStreamer) forwardNewAuthEvents(authEvents []*AuthEvent) error 
 				Msg("Failed to forward audit events to syslog server")
 		}
 	}
-
-	return nil
 }
 
-func (s *GitLabLogStreamer) processNewAuthEvents(authEvents []*AuthEvent) ([]*AuthEvent, error) {
-	newEvents := []*AuthEvent{}
-
-	for _, authEvent := range authEvents {
-		// check if the auditEvent correlation ID already exists
-		// if it does, we skip it
-		// if it doesn't, we insert it
-
-		_, ok := s.latestAuthEvents.Load(fmt.Sprintf("%s,%d", authEvent.CorrelationID, authEvent.Time.UnixNano()))
-		if ok {
-			log.Debug().Msgf("Auth event with correlation ID %s at %s already exists. Skipping", authEvent.CorrelationID, authEvent.Time.Format(time.RFC3339))
-			continue
-		}
-
-		err := s.db.Create(authEvent).Error
-		if err != nil {
-			log.Error().Err(err).Msgf("Failed to insert auth event with correlation ID %s", authEvent.CorrelationID)
-			return newEvents, err
-		}
-
-		s.latestAuthEvents.Store(fmt.Sprintf("%s,%d", authEvent.CorrelationID, authEvent.Time.UnixNano()), *authEvent)
-		newEvents = append(newEvents, authEvent)
-
-		authLogEventsReceived.Inc()
-
-		log.Info().Msgf("Inserted auth event with correlation ID %s", authEvent.CorrelationID)
+// storeAuthEvent persists an auth event that has not been seen before and
+// marks it as seen. It reports whether the event was new.
+func (s *GitLabLogStreamer) storeAuthEvent(authEvent *AuthEvent) (bool, error) {
+	if s.seenAuthEvents.seen(authEvent.CorrelationID, authEvent.Time) {
+		log.Debug().Msgf("Auth event with correlation ID %s at %s already exists. Skipping", authEvent.CorrelationID, authEvent.Time.Format(time.RFC3339))
+		return false, nil
 	}
 
-	log.Info().Msgf("Inserted %d new auth events", len(newEvents))
+	err := s.db.Create(authEvent).Error
+	if err != nil {
+		log.Error().Err(err).Msgf("Failed to insert auth event with correlation ID %s", authEvent.CorrelationID)
+		return false, err
+	}
 
-	return newEvents, nil
+	s.seenAuthEvents.add(authEvent.CorrelationID, authEvent.Time)
+	authLogEventsReceived.Inc()
+	log.Debug().Msgf("Inserted auth event with correlation ID %s", authEvent.CorrelationID)
+
+	return true, nil
 }
 
 func (s *GitLabLogStreamer) parseAuthEvent(line string) (*AuthEvent, error) {

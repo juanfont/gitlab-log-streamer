@@ -22,3 +22,10 @@ var authLogEventsReceived = promauto.NewCounter(prometheus.CounterOpts{
 	Name:      "auth_log_events_received",
 	Help:      "Number of auth log events received",
 })
+
+// auth_log_events dropped by the message filter (filters.auth_log.drop_messages)
+var authLogEventsDropped = promauto.NewCounter(prometheus.CounterOpts{
+	Namespace: prometheusNamespace,
+	Name:      "auth_log_events_dropped",
+	Help:      "Number of auth log events dropped by the message filter",
+})

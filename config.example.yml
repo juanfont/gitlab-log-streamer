@@ -22,3 +22,18 @@ destinations:
 
     # Optional. If true, the syslog message will be in LEEF format. Otherwise, syslog in RFC5424 format.
     use_leef: false
+
+# Optional. How long events are remembered for deduplication (preloaded from
+# the DB at startup, evicted hourly). Must cover the oldest line in the live
+# log files; GitLab rotates them daily. Default: 48h.
+# dedup_window: "48h"
+
+# Optional. Auth log events whose `message` matches one of these values
+# exactly are dropped: not stored, not forwarded, and counted in
+# gitlab_log_streamer_auth_log_events_dropped. Empty by default.
+# filters:
+#   auth_log:
+#     drop_messages:
+#       # Logged by GitLab >= 19.4 on every token-authenticated request when
+#       # IAM is disabled (always the case on self-managed).
+#       - "IAM JWT authentication attempt when disabled"

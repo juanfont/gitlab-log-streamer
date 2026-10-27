@@ -1,24 +1,30 @@
 package streamer
 
 import (
-	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/puzpuzpuz/xsync/v3"
 	"github.com/rs/zerolog/log"
 	"gorm.io/gorm"
 )
 
 const (
 	GitlabVersionManifestPath = "/opt/gitlab/version-manifest.txt"
-	PreloadEventsPeriodDays   = 30
+
+	// DefaultDedupWindow is used when Config.DedupWindow is not set. GitLab
+	// rotates its logs daily, so two days covers the live files.
+	DefaultDedupWindow = 48 * time.Hour
 
 	CleanAuthLogEventsPeriod = 60 * time.Hour * 24 // time to keep the auth events in the DB
+
+	// pollInterval re-checks the log files even without fsnotify events, as
+	// a safety net for missed events (e.g. an inotify queue overflow).
+	pollInterval = 30 * time.Second
 )
 
 type Config struct {
@@ -37,16 +43,48 @@ type Config struct {
 	SyslogServerAddr string
 	SyslogProtocol   string
 	UseLEEF          bool // Use QRadar propietary LEEF format
+
+	// DedupWindow is how long events are remembered for deduplication:
+	// preloaded from the DB at startup and evicted hourly. It must cover
+	// the oldest line in the live log files. Defaults to DefaultDedupWindow.
+	DedupWindow time.Duration
+
+	// AuthLogDropMessages lists auth log `message` values that are dropped
+	// before being stored, counted or forwarded.
+	AuthLogDropMessages []string
 }
 
 type GitLabLogStreamer struct {
 	cfg Config
 	db  *gorm.DB
 
-	latestAuditLogEvents *xsync.MapOf[string, AuditEvent]
-	latestAuthEvents     *xsync.MapOf[string, AuthEvent]
+	seenAuditEvents *dedupSet
+	seenAuthEvents  *dedupSet
+
+	auditTailer *logTailer
+	authTailer  *logTailer
 
 	currentGitlabVersion string
+}
+
+// newStreamer builds the in-memory state of a streamer, without opening the
+// DB or starting any goroutines.
+func newStreamer(config Config) *GitLabLogStreamer {
+	return &GitLabLogStreamer{
+		cfg:             config,
+		seenAuditEvents: newDedupSet(),
+		seenAuthEvents:  newDedupSet(),
+		auditTailer:     newLogTailer(config.AuditLogPath),
+		authTailer:      newLogTailer(config.AuthLogPath),
+	}
+}
+
+func (s *GitLabLogStreamer) dedupWindow() time.Duration {
+	if s.cfg.DedupWindow > 0 {
+		return s.cfg.DedupWindow
+	}
+
+	return DefaultDedupWindow
 }
 
 func NewGitLabLogStreamer(config Config) (*GitLabLogStreamer, error) {
@@ -56,11 +94,7 @@ func NewGitLabLogStreamer(config Config) (*GitLabLogStreamer, error) {
 		return nil, err
 	}
 
-	streamer := &GitLabLogStreamer{
-		cfg:                  config,
-		latestAuditLogEvents: xsync.NewMapOf[string, AuditEvent](),
-		latestAuthEvents:     xsync.NewMapOf[string, AuthEvent](),
-	}
+	streamer := newStreamer(config)
 
 	// run updateCurrentGitlabVersion() every 5 mins
 	go func() {
@@ -99,32 +133,46 @@ func NewGitLabLogStreamer(config Config) (*GitLabLogStreamer, error) {
 }
 
 func (s *GitLabLogStreamer) preloadDBRecentData() error {
-	// load the audit log events from the last preloadEventsPeriodDays from s.db
-	// and insert them into s.latestAuditLogEvents
+	// Rebuild the dedup sets from the events stored within the dedup window,
+	// so the files can be re-read from the start without re-forwarding.
+	cutoff := time.Now().Add(-s.dedupWindow())
 
-	auditEvents := []*AuditEvent{}
-	err := s.db.Where("time > ?", time.Now().AddDate(0, 0, -PreloadEventsPeriodDays)).Find(&auditEvents).Error
-	if err != nil {
+	if err := preloadDedupSet(s.db.Model(&AuditEvent{}), cutoff, s.seenAuditEvents); err != nil {
 		return err
 	}
 
-	for _, event := range auditEvents {
-		s.latestAuditLogEvents.Store(fmt.Sprintf("%s,%d", event.CorrelationID, event.Time.UnixNano()), *event)
-	}
-
-	// load the auth log events from the last preloadEventsPeriodDays from s.db
-	// and insert them into s.latestAuthEvents
-	authEvent := []*AuthEvent{}
-	err = s.db.Where("time > ?", time.Now().AddDate(0, 0, -PreloadEventsPeriodDays)).Find(&authEvent).Error
-	if err != nil {
+	if err := preloadDedupSet(s.db.Model(&AuthEvent{}), cutoff, s.seenAuthEvents); err != nil {
 		return err
 	}
 
-	for _, event := range authEvent {
-		s.latestAuthEvents.Store(fmt.Sprintf("%s,%d", event.CorrelationID, event.Time.UnixNano()), *event)
-	}
+	log.Info().
+		Int("audit_events", s.seenAuditEvents.size()).
+		Int("auth_events", s.seenAuthEvents.size()).
+		Dur("window", s.dedupWindow()).
+		Msg("Preloaded dedup state from the DB")
 
 	return nil
+}
+
+// preloadDedupSet adds the events matched by query that are newer than cutoff
+// to set. Only the dedup key columns are read, so no full events are loaded.
+func preloadDedupSet(query *gorm.DB, cutoff time.Time, set *dedupSet) error {
+	rows, err := query.Select("correlation_id", "time").Where("time > ?", cutoff).Rows()
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var correlationID string
+		var eventTime time.Time
+		if err := rows.Scan(&correlationID, &eventTime); err != nil {
+			return err
+		}
+		set.add(correlationID, eventTime)
+	}
+
+	return rows.Err()
 }
 
 func (s *GitLabLogStreamer) Watch() error {
@@ -141,9 +189,9 @@ func (s *GitLabLogStreamer) Watch() error {
 	}()
 	log.Info().Caller().Msgf("Listening observability on %s", s.cfg.ListenAddr)
 
-	watcher, err := fsnotify.NewWatcher()
+	watcher, err := s.newLogWatcher()
 	if err != nil {
-		log.Fatal().Caller().Err(err).Msgf("Error creating fsnotify watcher")
+		log.Fatal().Caller().Err(err).Msgf("Error watching the log files")
 	}
 	defer watcher.Close()
 
@@ -152,55 +200,92 @@ func (s *GitLabLogStreamer) Watch() error {
 		Str("auth_log_path", s.cfg.AuthLogPath).
 		Msgf("Watching for changes in the files")
 
-	done := make(chan bool)
-	go func() {
-		for {
-			select {
-			case event, ok := <-watcher.Events:
-				if !ok {
-					return
-				}
-				s.handleFileEvent(event)
-			case err, ok := <-watcher.Errors:
-				if !ok {
-					return
-				}
-				log.Warn().Caller().Err(err).Msgf("Error while watching")
-			}
-		}
-	}()
+	poll := time.NewTicker(pollInterval)
+	defer poll.Stop()
 
-	err = watcher.Add(s.cfg.AuditLogPath)
-	if err != nil {
-		log.Fatal().Caller().Err(err).Msg("Error adding audit log file to watcher")
-	}
-
-	err = watcher.Add(s.cfg.AuthLogPath)
-	if err != nil {
-		log.Fatal().Caller().Err(err).Msg("Error adding auth log file to watcher")
-	}
-
-	<-done
+	s.runWatchLoop(watcher, poll.C)
 
 	return nil
 }
 
-func (s *GitLabLogStreamer) handleFileEvent(event fsnotify.Event) {
-	switch event.Name {
-	case s.cfg.AuditLogPath:
-		if event.Op&fsnotify.Write == fsnotify.Write {
-			log.Info().Caller().Msgf("Audit log file %s modified", event.Name)
-			if err := s.readAuditLogFile(); err != nil {
-				log.Error().Caller().Err(err).Msg("Error reading audit log file")
+// newLogWatcher watches the directories holding the log files rather than
+// the files themselves, so the watch survives rename-based log rotation.
+func (s *GitLabLogStreamer) newLogWatcher() (*fsnotify.Watcher, error) {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return nil, err
+	}
+
+	dirs := map[string]struct{}{
+		filepath.Dir(s.cfg.AuditLogPath): {},
+		filepath.Dir(s.cfg.AuthLogPath):  {},
+	}
+	for dir := range dirs {
+		if err := watcher.Add(dir); err != nil {
+			watcher.Close()
+			return nil, err
+		}
+	}
+
+	return watcher, nil
+}
+
+// runWatchLoop reads the log files on fsnotify events and on every tick of
+// poll, until the watcher is closed. It is the only reader of the files once
+// the streamer is running.
+func (s *GitLabLogStreamer) runWatchLoop(watcher *fsnotify.Watcher, poll <-chan time.Time) {
+	for {
+		select {
+		case event, ok := <-watcher.Events:
+			if !ok {
+				return
 			}
+			s.handleFileEvent(event)
+
+		case err, ok := <-watcher.Errors:
+			if !ok {
+				return
+			}
+			// Events may have been lost (e.g. queue overflow): catch up.
+			log.Warn().Caller().Err(err).Msgf("Error while watching")
+			s.readLogFiles()
+
+		case <-poll:
+			s.readLogFiles()
+		}
+	}
+}
+
+func (s *GitLabLogStreamer) readLogFiles() {
+	if err := s.readAuditLogFile(); err != nil {
+		log.Error().Caller().Err(err).Msg("Error reading audit log file")
+	}
+	if err := s.readAuthLogFile(); err != nil {
+		log.Error().Caller().Err(err).Msg("Error reading auth log file")
+	}
+}
+
+func (s *GitLabLogStreamer) handleFileEvent(event fsnotify.Event) {
+	// Create and Rename matter for rotation; Remove lets the tailer drain
+	// the old file. Chmod is ignored.
+	if !event.Has(fsnotify.Write) && !event.Has(fsnotify.Create) &&
+		!event.Has(fsnotify.Rename) && !event.Has(fsnotify.Remove) {
+		return
+	}
+
+	// The watch is on the parent directory, so events for other files in it
+	// arrive here too and are ignored.
+	switch filepath.Clean(event.Name) {
+	case filepath.Clean(s.cfg.AuditLogPath):
+		log.Debug().Caller().Str("op", event.Op.String()).Msgf("Audit log file %s changed", event.Name)
+		if err := s.readAuditLogFile(); err != nil {
+			log.Error().Caller().Err(err).Msg("Error reading audit log file")
 		}
 
-	case s.cfg.AuthLogPath:
-		if event.Op&fsnotify.Write == fsnotify.Write {
-			log.Info().Caller().Msgf("Auth log file %s modified", event.Name)
-			if err := s.readAuthLogFile(); err != nil {
-				log.Error().Caller().Err(err).Msg("Error reading auth log file")
-			}
+	case filepath.Clean(s.cfg.AuthLogPath):
+		log.Debug().Caller().Str("op", event.Op.String()).Msgf("Auth log file %s changed", event.Name)
+		if err := s.readAuthLogFile(); err != nil {
+			log.Error().Caller().Err(err).Msg("Error reading auth log file")
 		}
 	}
 }
@@ -220,25 +305,14 @@ func (s *GitLabLogStreamer) cleanOldEvents() {
 	}
 }
 
-// evictOldDedupEntries drops entries from the in-memory dedup maps once they
-// fall outside the preload window. Without this the maps grow for the whole
+// evictOldDedupEntries drops entries from the in-memory dedup sets once they
+// fall outside the dedup window. Without this the sets grow for the whole
 // process lifetime. This is safe as long as the log files no longer contain
-// events older than the window (GitLab rotates them), which is the same
-// assumption preloadDBRecentData already relies on.
+// events older than the window (GitLab rotates them daily), which is the same
+// assumption preloadDBRecentData relies on.
 func (s *GitLabLogStreamer) evictOldDedupEntries() {
-	cutoff := time.Now().AddDate(0, 0, -PreloadEventsPeriodDays)
+	cutoff := time.Now().Add(-s.dedupWindow())
 
-	s.latestAuditLogEvents.Range(func(key string, event AuditEvent) bool {
-		if event.Time.Before(cutoff) {
-			s.latestAuditLogEvents.Delete(key)
-		}
-		return true
-	})
-
-	s.latestAuthEvents.Range(func(key string, event AuthEvent) bool {
-		if event.Time.Before(cutoff) {
-			s.latestAuthEvents.Delete(key)
-		}
-		return true
-	})
+	s.seenAuditEvents.evictBefore(cutoff)
+	s.seenAuthEvents.evictBefore(cutoff)
 }

@@ -3,8 +3,6 @@ package streamer
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"strings"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -17,45 +15,54 @@ const (
 	AuditEventLoginStandard      = "standard"
 )
 
+// forwardBatchSize bounds how many new events are held in memory before
+// being forwarded, e.g. on a first start against a large existing log.
+const forwardBatchSize = 1000
+
+// readAuditLogFile stores and forwards the audit events appended to the log
+// since the previous call.
 func (s *GitLabLogStreamer) readAuditLogFile() error {
-	content, err := os.ReadFile(s.cfg.AuditLogPath)
-	if err != nil {
-		return err
-	}
+	newEvents := []*AuditEvent{}
 
-	lines := strings.Split(string(content), "\n")
-	auditEvents := []*AuditEvent{}
-
-	for _, line := range lines {
-		if line == "" {
-			continue
+	err := s.auditTailer.readLines(func(line []byte) error {
+		if len(line) == 0 {
+			return nil
 		}
 
-		auditEvent, err := s.parseAuditLogEvent(line)
+		auditEvent, err := s.parseAuditLogEvent(string(line))
 		if err != nil {
 			log.Warn().Err(err).Msgf("Failed to parse audit log entry. Content: %s", line)
-			continue
+			return nil
 		}
 
-		auditEvents = append(auditEvents, auditEvent)
-	}
+		isNew, err := s.storeAuditEvent(auditEvent)
+		if err != nil || !isNew {
+			return err
+		}
 
-	newEvents, err := s.processNewAuditLogEvents(auditEvents)
-	if err != nil {
-		return err
-	}
+		newEvents = append(newEvents, auditEvent)
+		if len(newEvents) >= forwardBatchSize {
+			s.forwardNewAuditLogEvents(newEvents)
+			newEvents = []*AuditEvent{}
+		}
 
-	err = s.forwardNewAuditLogEvents(newEvents)
-	if err != nil {
-		return err
-	}
+		return nil
+	})
 
-	return nil
+	// Forward what was stored even if reading stopped on an error: those
+	// events are already marked as seen and would not be forwarded later.
+	s.forwardNewAuditLogEvents(newEvents)
+
+	return err
 }
 
-func (s *GitLabLogStreamer) forwardNewAuditLogEvents(auditEvents []*AuditEvent) error {
+func (s *GitLabLogStreamer) forwardNewAuditLogEvents(auditEvents []*AuditEvent) {
+	if len(auditEvents) == 0 {
+		return
+	}
+
 	if s.cfg.AuditLogForwardingEndpoint != "" {
-		log.Info().Msgf("Forwarding %d audit events to HTTP endpoint %s", len(auditEvents), s.cfg.AuditLogForwardingEndpoint)
+		log.Debug().Msgf("Forwarding %d audit events to HTTP endpoint %s", len(auditEvents), s.cfg.AuditLogForwardingEndpoint)
 		err := s.forwardNewAuditLogEventsHTTP(auditEvents)
 		if err != nil {
 			log.Warn().Err(err).Msg("Failed to forward audit events to HTTP endpoint")
@@ -68,39 +75,27 @@ func (s *GitLabLogStreamer) forwardNewAuditLogEvents(auditEvents []*AuditEvent) 
 			log.Warn().Err(err).Msg("Failed to forward audit events to syslog server")
 		}
 	}
-
-	return nil
 }
 
-func (s *GitLabLogStreamer) processNewAuditLogEvents(auditEvents []*AuditEvent) ([]*AuditEvent, error) {
-	newEvents := []*AuditEvent{}
-
-	for _, auditEvent := range auditEvents {
-		// check if the auditEvent correlation ID already exists
-		// if it does, we skip it
-		// if it doesn't, we insert it
-
-		_, ok := s.latestAuditLogEvents.Load(fmt.Sprintf("%s,%d", auditEvent.CorrelationID, auditEvent.Time.UnixNano()))
-		if ok {
-			log.Debug().Msgf("Audit event with correlation ID %s at %s already exists. Skipping", auditEvent.CorrelationID, auditEvent.Time.Format(time.RFC3339))
-			continue
-		}
-
-		err := s.db.Create(auditEvent).Error
-		if err != nil {
-			log.Error().Err(err).Msgf("Failed to insert audit event with correlation ID %s", auditEvent.CorrelationID)
-			return newEvents, err
-		}
-
-		s.latestAuditLogEvents.Store(fmt.Sprintf("%s,%d", auditEvent.CorrelationID, auditEvent.Time.UnixNano()), *auditEvent)
-		newEvents = append(newEvents, auditEvent)
-		auditLogEventsReceived.Inc()
-		log.Info().Msgf("Inserted audit event with correlation ID %s", auditEvent.CorrelationID)
+// storeAuditEvent persists an audit event that has not been seen before and
+// marks it as seen. It reports whether the event was new.
+func (s *GitLabLogStreamer) storeAuditEvent(auditEvent *AuditEvent) (bool, error) {
+	if s.seenAuditEvents.seen(auditEvent.CorrelationID, auditEvent.Time) {
+		log.Debug().Msgf("Audit event with correlation ID %s at %s already exists. Skipping", auditEvent.CorrelationID, auditEvent.Time.Format(time.RFC3339))
+		return false, nil
 	}
 
-	log.Info().Msgf("Inserted %d new audit events", len(newEvents))
+	err := s.db.Create(auditEvent).Error
+	if err != nil {
+		log.Error().Err(err).Msgf("Failed to insert audit event with correlation ID %s", auditEvent.CorrelationID)
+		return false, err
+	}
 
-	return newEvents, nil
+	s.seenAuditEvents.add(auditEvent.CorrelationID, auditEvent.Time)
+	auditLogEventsReceived.Inc()
+	log.Debug().Msgf("Inserted audit event with correlation ID %s", auditEvent.CorrelationID)
+
+	return true, nil
 }
 
 func (s *GitLabLogStreamer) parseAuditLogEvent(line string) (*AuditEvent, error) {

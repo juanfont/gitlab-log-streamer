@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"strings"
+	"time"
 
 	streamer "github.com/juanfont/gitlab-log-streamer"
 	"github.com/rs/zerolog"
@@ -22,6 +23,8 @@ func getStreamerConfig() (streamer.Config, error) {
 		SyslogServerAddr:           viper.GetString("destinations.syslog.server_addr"),
 		SyslogProtocol:             viper.GetString("destinations.syslog.protocol"),
 		UseLEEF:                    viper.GetBool("destinations.syslog.use_leef"),
+		DedupWindow:                viper.GetDuration("dedup_window"),
+		AuthLogDropMessages:        viper.GetStringSlice("filters.auth_log.drop_messages"),
 	}
 
 	return cfg, nil
@@ -60,6 +63,15 @@ func loadViperConfig(path string, isFile bool) error {
 
 	if viper.GetString("db_path") == "" {
 		errorText += "Fatal config error: set db_path in config file\n"
+	}
+
+	// viper.GetDuration silently returns 0 for unparsable values, which would
+	// quietly fall back to the default window.
+	if viper.IsSet("dedup_window") {
+		window, err := time.ParseDuration(viper.GetString("dedup_window"))
+		if err != nil || window <= 0 {
+			errorText += "Fatal config error: dedup_window must be a positive duration, e.g. \"48h\"\n"
+		}
 	}
 
 	if errorText != "" {
